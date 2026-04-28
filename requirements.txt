@@ -1,0 +1,14 @@
+# core
+torch
+transformers
+pandas
+numpy
+
+# retrieval & indexing
+faiss-cpu
+sentence-transformers
+rank-bm25
+
+# pdf processing
+pymupdf
+pymupdf4llm
