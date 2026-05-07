@@ -6,7 +6,7 @@ from src.preprocess.build_index import build_index
 from src.preprocess.pdf2md import process_pdf_data
 from src.llm import LLMService
 from src.router import RouterAgent
-from retrieval.apiretriever import APIRetriever
+from src.retrieval.apiretriever import APIRetriever
 from src.agents.api import APIAgent
 from src.agents.document import DocAgent
 
