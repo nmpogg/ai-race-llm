@@ -94,7 +94,7 @@ def infer():
             "id": q_id,
             "func_code": func_code,
             "func_param": func_param,
-            "time_response": int((time.time() - start_time) * 1000)
+            "time": int((time.time() - start_time) * 1000)
         })
         
         if (index + 1) % 10 == 0: 
