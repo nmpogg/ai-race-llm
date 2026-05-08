@@ -16,15 +16,17 @@ class APIRetriever:
     def _tokenize(self, text):
         return re.findall(r'\b\w+\b', str(text).lower())
 
-    def get_top_apis_config(self, question, k=2):
+    def get_top_apis_df(self, question, k=3):
+        """Trả về DataFrame thay vì string để APIAgent tự xử lý"""
         tokenized_query = self._tokenize(question)
         self.df_api['score'] = self.bm25.get_scores(tokenized_query)
-        top_k_df = self.df_api.sort_values(by='score', ascending=False).head(k)
-        
+        return self.df_api.sort_values(by='score', ascending=False).head(k).reset_index(drop=True)
+
+    def get_top_apis_config(self, question, k=3):
+        """Giữ lại để tương thích"""
+        top_k_df = self.get_top_apis_df(question, k)
         configs = []
         for _, row in top_k_df.iterrows():
             if row['score'] > 0:
-                # Trả về một chuỗi gom cả Tên API và Config để đưa vào Prompt
                 configs.append(f"Tên API: {row['name']}\nCấu hình:\n{row['Endpoint config']}")
-        
         return "\n---\n".join(configs)
