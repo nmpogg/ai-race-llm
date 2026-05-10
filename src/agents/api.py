@@ -1,58 +1,69 @@
-import json, re
-from datetime import date
+"""
+api.py — APIAgent
+
+Cải tiến so với bản cũ:
+  1. Retrieve top-5 APIs thay vì top-3
+  2. LLM chọn API dựa trên mô tả + ví dụ câu hỏi mẫu
+  3. Few-shot động từ example_data inject vào prompt chọn API
+  4. Body building giữ nguyên rule-based (ổn định hơn LLM cho structured data)
+"""
+
+import json
+import re
 import calendar
 
+
 class APIAgent:
-    def __init__(self, llm_service, retriever):
+    def __init__(self, llm_service, retriever, fewshot_loader=None):
         self.llm = llm_service
         self.retriever = retriever
+        self.fewshot = fewshot_loader
 
-    # ─── DATE EXTRACTION ──────────────────────────────────────────────────────
-
-    def _extract_dates(self, question):
-        """Trích fromDate, toDate từ câu hỏi"""
+    # DATE EXTRACTION 
+    def _extract_dates(self, question: str) -> tuple[str, str]:
         q = question.lower()
 
-        # Khoảng tháng: tháng 6/2025 - tháng 11/2025
+        # Range: tháng X/YYYY đến tháng Y/YYYY
         m = re.search(
-            r'(?:tháng|t)\s*(\d{1,2})[/\-](\d{4})\s*(?:-|->|đến|~)\s*(?:tháng|t)?\s*(\d{1,2})[/\-](\d{4})',
-            q
+            r"(?:tháng|t)\s*(\d{1,2})[/\-](\d{4})\s*(?:-|->|đến|~)\s*"
+            r"(?:tháng|t)?\s*(\d{1,2})[/\-](\d{4})",
+            q,
         )
         if m:
-            m1, y1, m2, y2 = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
-            return self._month_start(y1, m1), self._month_end(y2, m2)
+            m1, y1, m2, y2 = (
+                int(m.group(1)), int(m.group(2)),
+                int(m.group(3)), int(m.group(4)),
+            )
+            return self._ms(y1, m1), self._me(y2, m2)
 
-        # Tháng đơn: tháng 8/2025 hoặc t8/2025
-        m = re.search(r'(?:tháng|t)\s*(\d{1,2})[/\-](\d{4})', q)
+        # Single month: tháng X/YYYY hoặc tX/YYYY
+        m = re.search(r"(?:tháng|t)\s*(\d{1,2})[/\-](\d{4})", q)
         if m:
             mo, yr = int(m.group(1)), int(m.group(2))
-            return self._month_start(yr, mo), self._month_end(yr, mo)
+            return self._ms(yr, mo), self._me(yr, mo)
 
-        # Quý: quý 3/2025 hoặc q3/2025
-        m = re.search(r'(?:quý|q)\s*(\d)[/\-\s](\d{4})', q)
+        # Quarter: quý X/YYYY hoặc qX-YYYY
+        m = re.search(r"(?:quý|q)\s*([1-4])[/\-\s](\d{4})", q)
         if m:
             qtr, yr = int(m.group(1)), int(m.group(2))
-            start_m = (qtr - 1) * 3 + 1
-            end_m = qtr * 3
-            return self._month_start(yr, start_m), self._month_end(yr, end_m)
+            sm = (qtr - 1) * 3 + 1
+            return self._ms(yr, sm), self._me(yr, sm + 2)
 
-        # Năm: năm 2025
-        m = re.search(r'(?:năm|year)\s*(20\d{2})', q)
+        # Full year: năm YYYY
+        m = re.search(r"(?:năm|year)\s*(20\d{2})", q)
         if m:
             yr = int(m.group(1))
             return f"{yr}-01-01", f"{yr}-12-31"
 
         return "", ""
 
-    def _month_start(self, yr, mo):
+    def _ms(self, yr: int, mo: int) -> str:
         return f"{yr}-{mo:02d}-01"
 
-    def _month_end(self, yr, mo):
-        last_day = calendar.monthrange(yr, mo)[1]
-        return f"{yr}-{mo:02d}-{last_day}"
+    def _me(self, yr: int, mo: int) -> str:
+        return f"{yr}-{mo:02d}-{calendar.monthrange(yr, mo)[1]}"
 
-    # ─── ORGANIZATION EXTRACTION ──────────────────────────────────────────────
-
+    # ENUM EXTRACTION 
     ORG_ALIASES = {
         "ttpmqt": "TTPMQT", "ttpmtcs": "TTPMTCS", "ttpmvt": "TTPMVT",
         "ttpmcnm": "TTPMCNM", "ttpmcds": "TTPMCDS", "ttcndt": "TTCNDT",
@@ -60,45 +71,81 @@ class APIAgent:
         "pm qt": "TTPMQT", "pm tcs": "TTPMTCS", "pm vt": "TTPMVT",
         "pm cnm": "TTPMCNM", "pm cds": "TTPMCDS",
     }
-
-    def _extract_orgs(self, question):
-        q = question.lower()
-        found = []
-        for alias, canonical in self.ORG_ALIASES.items():
-            if alias in q and canonical not in found:
-                found.append(canonical)
-        # "cả công ty" → không trả org list
-        if re.search(r'cả\s+công\s+ty|toàn\s+công\s+ty', q):
-            return []
-        return found
-
-    # ─── ENUM EXTRACTION ─────────────────────────────────────────────────────
-
     PROJECT_TYPE_MAP = {
         "package": "Package", "gói": "Package",
-        "osdc": "osdc", "odc": "odc", "odc/osdc": "odc/osdc",
-        "t&m": "T&M", "tm": "T&M", "time": "T&M",
+        "osdc": "osdc", "odc/osdc": "odc/osdc", "odc": "odc",
+        "t&m": "T&M", "time and material": "T&M",
         "presale": "presales", "presales": "presales",
     }
     PROJECT_STATUS_MAP = {
-        "in-progress": "in-progress", "đang thực hiện": "in-progress", "đang triển khai": "in-progress",
+        "in-progress": "in-progress", "đang thực hiện": "in-progress",
         "hold": "hold", "tạm dừng": "hold",
         "closed": "closed", "đóng": "closed", "kết thúc": "closed",
         "open": "open", "mở": "open",
     }
 
-    def _extract_enum(self, question, mapping):
+    def _extract_orgs(self, question: str) -> list[str]:
         q = question.lower()
-        found = []
-        for kw, val in mapping.items():
-            if kw in q and val not in found:
-                found.append(val)
+        if re.search(r"cả\s+công\s+ty|toàn\s+công\s+ty|tất cả", q):
+            return []
+        found, seen = [], set()
+        for alias, canon in self.ORG_ALIASES.items():
+            if alias in q and canon not in seen:
+                found.append(canon)
+                seen.add(canon)
         return found
 
-    # ─── BODY BUILDER ─────────────────────────────────────────────────────────
+    def _extract_enum(self, question: str, mapping: dict) -> list[str]:
+        q = question.lower()
+        found, seen = [], set()
+        for kw, val in mapping.items():
+            if kw in q and val not in seen:
+                found.append(val)
+                seen.add(val)
+        return found
 
-    def _build_body(self, question, endpoint_config_str):
-        """Điền body dựa trên required/optional params + rule extraction"""
+    # API SELECTION VIA LLM 
+    _SELECT_PROMPT = (
+        "{fewshot}"
+        "Chọn API phù hợp nhất với câu hỏi bên dưới.\n\n"
+        "[DANH SÁCH API]:\n{api_list}\n\n"
+        "[CÂU HỎI]: {question}\n\n"
+        "Chỉ trả về func_code của API phù hợp nhất, không giải thích:\n"
+        "func_code:"
+    )
+
+    def _select_api(self, question: str, top_df) -> str | None:
+        api_list_str = "\n---\n".join(
+            f"func_code: {row['func_code']}\n"
+            f"Mô tả: {row.get('description', '')}\n"
+            f"Ví dụ câu hỏi: {row.get('Example question', '')}"
+            for _, row in top_df.iterrows()
+        )
+
+        fewshot_block = ""
+        if self.fewshot is not None:
+            fewshot_block = self.fewshot.get_api_fewshot(question)
+
+        prompt = self._SELECT_PROMPT.format(
+            fewshot=fewshot_block,
+            api_list=api_list_str,
+            question=question,
+        )
+        raw = self.llm.generate(prompt, max_tokens=30).strip()
+
+        # Khớp chính xác
+        for fc in top_df["func_code"].tolist():
+            if fc.lower() in raw.lower():
+                return fc
+        # Khớp gần đúng (bỏ khoảng trắng)
+        raw_clean = re.sub(r"\s+", "", raw).lower()
+        for fc in top_df["func_code"].tolist():
+            if re.sub(r"\s+", "", fc).lower() in raw_clean:
+                return fc
+        return None
+
+    # BODY BUILDER
+    def _build_body(self, question: str, endpoint_config_str: str) -> dict:
         try:
             cfg = json.loads(endpoint_config_str)
         except Exception:
@@ -112,15 +159,15 @@ class APIAgent:
 
         body = {}
         for p in all_params:
-            name = p["name"]
+            name = p.get("name", "")
             ptype = p.get("type", "")
-            desc = p.get("description", "").lower()
+            alias = p.get("alias", name)
 
-            if name == "fromDate":
+            if name in ("fromDate", "from_date", "startDate"):
                 body[name] = from_date
-            elif name == "toDate":
+            elif name in ("toDate", "to_date", "endDate"):
                 body[name] = to_date
-            elif name in ("organization", "orgAlias"):
+            elif name in ("organization", "orgAlias", "org"):
                 body[name] = orgs
             elif name == "projectType":
                 body[name] = proj_types
@@ -128,60 +175,32 @@ class APIAgent:
                 body[name] = proj_status
             elif name == "isCompany":
                 body[name] = not bool(orgs)
-            elif name in ("page",):
+            elif name == "page":
                 body[name] = 0
-            elif name in ("size",):
+            elif name == "size":
                 body[name] = 20
-            elif "List" in ptype:
+            elif "List" in ptype or "list" in ptype.lower():
                 body[name] = []
-            # Bỏ qua các param optional không xác định được
 
         return body
 
-    # ─── MAIN PROCESS ─────────────────────────────────────────────────────────
-
-    def _select_api(self, question, api_configs_raw, configs_df):
-        """LLM chỉ chọn API phù hợp, trả về func_code"""
-        prompt = f"""<|im_start|>system
-Chọn API phù hợp nhất với câu hỏi. Chỉ trả về func_code (một chuỗi, không giải thích).
-
-[DANH SÁCH API]:
-{api_configs_raw}
-<|im_end|>
-<|im_start|>user
-Câu hỏi: {question}
-<|im_end|>
-<|im_start|>assistant
-"""
-        raw = self.llm.generate(prompt).strip()
-        # Tìm func_code khớp trong danh sách
-        for fc in configs_df["func_code"].tolist():
-            if fc.lower() in raw.lower():
-                return fc
-        return None
-
-    def process(self, question):
-        # Lấy top 3 API configs
-        top_df = self.retriever.get_top_apis_df(question, k=3)
+    # MAIN PROCESS
+    def process(self, question: str) -> str:
+        # Retrieve top-5 APIs
+        top_df = self.retriever.get_top_apis_df(question, k=5)
         if top_df.empty:
             return "{}"
 
-        api_list = "\n---\n".join(
-            f"func_code: {row['func_code']}\nMô tả: {row['description']}\nVí dụ: {row['Example question']}"
-            for _, row in top_df.iterrows()
-        )
+        # LLM chọn API tốt nhất
+        selected_fc = self._select_api(question, top_df)
 
-        # LLM chọn func_code
-        selected_fc = self._select_api(question, api_list, top_df)
-
-        # Nếu LLM không chọn được → lấy top 1
         if selected_fc is None:
             selected_row = top_df.iloc[0]
         else:
             rows = top_df[top_df["func_code"] == selected_fc]
             selected_row = rows.iloc[0] if not rows.empty else top_df.iloc[0]
 
-        # Lấy path và build body bằng rules
+        # Lấy path từ endpoint config
         try:
             cfg = json.loads(selected_row["Endpoint config"])
             path = cfg["request"]["path"]
@@ -189,5 +208,4 @@ Câu hỏi: {question}
             return "{}"
 
         body = self._build_body(question, selected_row["Endpoint config"])
-
         return json.dumps({"path": path, "body": body}, ensure_ascii=False)

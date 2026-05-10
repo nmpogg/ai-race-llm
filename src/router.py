@@ -1,60 +1,113 @@
 import re
 
-class RouterAgent:
-    def classify(self, question):
-        text = str(question).lower()
 
-        # 1. Dấu hiệu MCQ → call_document
-        mcq_signals = [
-            r'\ba[\.\)]\s+\w', r'\bb[\.\)]\s+\w',
-            r'\bc[\.\)]\s+\w', r'\bd[\.\)]\s+\w',
-            r'đáp án (nào|đúng|sau)',
-            r'phương án (nào|đúng|sau)',
-            r'(câu|ý|điều|phát biểu|nhận định|khẳng định)\s+nào\s+(sau đây|dưới đây|đúng|sai)',
-            r'(đúng|sai|chính xác|không chính xác|không đúng)\??\s*$',
-            r'(chọn|lựa chọn)\s+(đáp án|phương án)',
-        ]
-        if sum(1 for p in mcq_signals if re.search(p, text)) >= 2:
+class RouterAgent:
+
+    def __init__(self, llm_service=None):
+        self.llm = llm_service
+
+    # MCQ SIGNALS 
+    # Hard: có options A/B/C/D dạng option list
+    _MCQ_HARD = [
+        r"(?<!\w)[aAbBcCdD][.)]\s{0,3}\S",   # a. / b) / C. dạng option
+        r"\b[ABCD]\s*[.)]\s*\w",             # A. hoặc B) viết hoa
+    ]
+    # Soft: hỏi về đáp án/phương án nhưng không có options rõ ràng
+    _MCQ_SOFT = [
+        r"đáp án (nào|đúng|sau|sau đây|dưới đây)",
+        r"phương án (nào|đúng|sau|sau đây)",
+        r"(câu|ý|phát biểu|nhận định|khẳng định)\s+nào\s+(sau đây|dưới đây|đúng|sai|chính xác)",
+        r"(đúng|sai|chính xác|không đúng|không chính xác)\s*\??\s*$",
+        r"(chọn|lựa chọn)\s+(đáp án|phương án|câu trả lời)",
+        r"trong (các|những) (đáp án|phương án|lựa chọn)",
+        r"(tất cả|bao nhiêu).*(đúng|sai|chính xác)",
+    ]
+
+    # API SIGNALS
+    _API_HARD = [
+        # Domain acronyms
+        r"\bttpm\w*\b", r"\bcbnv\b", r"\bnslđ\b", r"\bosdc\b",
+        r"\bslnt\b", r"\bslsx\b", r"\bcpnc\b", r"\blcnt\b",
+        r"\bkpi\b", r"\bsla\b", r"\botd\b", r"\bfpy\b", r"\bdpmo\b",
+        r"\bocs\b", r"\boee\b", r"\btakt\b",
+        r"leakage rate", r"defect rate", r"yield rate",
+        r"tr\.?\s*đồng", r"trđ\b", r"mm/người",
+        r"\bpackage\b", r"presale[s]?", r"\bodc\b",
+        # Nghiệp vụ
+        r"năng suất lao động",
+        r"hiệu suất (tổng thể|thiết bị|lao động|sản xuất)",
+        r"sản lượng (sản xuất|thực tế|kế hoạch|đầu ra|hoàn thành)",
+        r"doanh thu (thực tế|kế hoạch|thuần|gộp|ròng)",
+        r"chi phí (nhân công|sản xuất|vận hành|trực tiếp|gián tiếp)",
+        r"lợi nhuận (gộp|ròng|thuần|trước thuế|sau thuế)",
+        r"tỷ lệ (lỗi|hỏng|đạt|hoàn thành|nghỉ|vắng|thất thoát)",
+        r"số (ca làm việc|dự án|nhân viên|công nhân|lao động)\b",
+        r"(gọi|call|lấy|tra cứu|lọc)\s+(api|dữ liệu|số liệu|báo cáo)",
+        r"api\s+(nào|cần|để|phù hợp|cho)",
+        r"cấu hình\s+api",
+        r"endpoint\b",
+    ]
+    _API_TIME = [
+        r"trong năm 20\d{2}",
+        r"trong t(?:háng)?\s*\d{1,2}[/\-]20\d{2}",
+        r"tháng \d{1,2}[\s/]*(?:năm\s*)?20\d{2}",
+        r"trong quý [1-4][\s/]*20\d{2}",
+        r"q[1-4][/\-]20\d{2}",
+        r"\d{1,2}/20\d{2}\b",
+        r"\bt\d{1,2}/20\d{2}\b",
+        r"quý [1-4]\s+(?:năm\s*)?20\d{2}",
+        r"(?:tháng|t\.)\s*\d{1,2}\s*(?:đến|~|\-)\s*(?:tháng|t\.)?\s*\d{1,2}",
+    ]
+
+    # LLM FALLBACK PROMPT 
+    _LLM_PROMPT = (
+        "Phân loại câu hỏi sau vào ĐÚNG MỘT nhãn:\n"
+        '- "call_document": câu hỏi trắc nghiệm hoặc hỏi về quy định/khái niệm/lý thuyết\n'
+        '- "call_api": câu hỏi cần lấy số liệu thực tế (KPI, doanh thu, sản lượng, cấu hình API)\n\n'
+        "Chỉ trả về đúng 1 chuỗi: call_document hoặc call_api\n\n"
+        "Câu hỏi: {question}\n\n"
+        "Nhãn:"
+    )
+
+    # CLASSIFY
+
+    def classify(self, question: str) -> str:
+        text = str(question)
+        text_lower = text.lower()
+
+        # Tầng 1: MCQ hard — có ít nhất 2 options A/B/C/D → chắc chắn document
+        mcq_hard = sum(1 for p in self._MCQ_HARD if re.search(p, text))
+        if mcq_hard >= 2:
             return "call_document"
 
-        # 2. Keyword nghiệp vụ → call_api
-        api_keywords = [
-            r'\bttpm\w*\b', r'\bcbnv\b', r'\bnslđ\b', r'\bosdc\b',
-            r'\bslnt\b', r'\bslsx\b', r'\bcpnc\b', r'\blcnt\b',
-            r'\bkpi\b', r'\bsla\b', r'\botd\b', r'\bfpy\b', r'\bdpmo\b',
-            r'\bocs\b', r'\boee\b', r'\btakt\b',
-            r'leakage rate', r'defect rate',
-            r'tr đồng', r'trđ', r'mm/người', r'\bpackage\b',
-            r'năng suất lao động', r'hiệu suất',
-            r'sản lượng (sản xuất|thực tế|kế hoạch)',
-            r'doanh thu (thực tế|kế hoạch|thuần)',
-            r'chi phí (nhân công|sản xuất|vận hành)',
-            r'lợi nhuận (gộp|ròng|thuần)',
-            r'tỷ lệ (lỗi|hỏng|đạt|hoàn thành)',
-        ]
-        for pattern in api_keywords:
-            if re.search(pattern, text):
-                return "call_api"
+        # Tầng 2: API hard signal
+        api_score = sum(1 for p in self._API_HARD if re.search(p, text_lower))
+        time_score = sum(1 for p in self._API_TIME if re.search(p, text_lower))
+        api_total = api_score + time_score * 2
 
-        # 3. Time pattern → call_api
-        time_patterns = [
-            r'trong năm 202\d', r'trong t\d{1,2}/202\d',
-            r'trong tháng \d{1,2}\s*/202\d', r'tháng \d{1,2} năm 202\d',
-            r'trong quý \d[\s/]202\d', r'q\d[/-]202\d', r'\d{1,2}/202\d',
-            r'(?:tháng|t)\s*\d{1,2}/\d{4}\s*(?:-|->|đến|~)\s*(?:tháng|t)\s*\d{1,2}/\d{4}',
-        ]
-        for pattern in time_patterns:
-            if re.search(pattern, text):
-                return "call_api"
+        if api_total >= 2:
+            return "call_api"
 
-        # 4. Tra cứu dữ liệu động → call_api
-        data_query_patterns = [
-            r'(cho biết|tính|tìm|xác định|lấy|tra cứu)\s+.{0,30}(số liệu|dữ liệu|giá trị|chỉ số|kết quả)',
-            r'(báo cáo|thống kê|tổng hợp)\s+(số liệu|kết quả|dữ liệu)',
-            r'api\s+(nào|cần|để)', r'(gọi|call)\s+api',
-        ]
-        for pattern in data_query_patterns:
-            if re.search(pattern, text):
-                return "call_api"
+        # API score = 1 nhưng không có MCQ soft → call_api
+        mcq_soft = sum(1 for p in self._MCQ_SOFT if re.search(p, text_lower))
+        if api_total == 1 and mcq_soft == 0:
+            return "call_api"
 
-        return "call_document"
+        # Tầng 3: MCQ soft signal rõ ràng
+        if mcq_soft >= 2:
+            return "call_document"
+
+        # Tầng 4: LLM fallback khi tín hiệu mơ hồ
+        if self.llm is not None:
+            try:
+                prompt = self._LLM_PROMPT.format(question=text[:600])
+                raw = self.llm.generate(prompt, max_tokens=8).lower().strip()
+                if "call_api" in raw:
+                    return "call_api"
+                if "call_document" in raw:
+                    return "call_document"
+            except Exception as e:
+                print(f"⚠️ Router LLM lỗi: {e}")
+
+        # Default: nếu có bất kỳ soft MCQ signal → document, còn lại → api
+        return "call_document" if mcq_soft >= 1 else "call_api"

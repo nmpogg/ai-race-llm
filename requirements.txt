@@ -3,6 +3,8 @@ torch
 transformers
 pandas
 numpy
+accelerate>=0.27.0
+bitsandbytes>=0.43.0
 
 # retrieval & indexing
 faiss-cpu
