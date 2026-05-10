@@ -119,13 +119,15 @@ def save_checkpoint(results: list):
     pd.DataFrame(results).to_csv(CHECKPOINT_FILE, index=False, encoding="utf-8-sig")
 
 # MAIN 
-def main():
+def main(router=None, doc_agent=None, api_agent=None):
     os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
 
     df_input = _read_input(INPUT_FILE)
     print(f"📋 Tổng số câu hỏi: {len(df_input)}")
 
-    router, doc_agent, api_agent = load_services()
+    # Dùng services truyền vào, không load lại
+    if router is None or doc_agent is None or api_agent is None:
+        router, doc_agent, api_agent = load_services()
 
     done_ids = load_checkpoint()
     results: list = []
@@ -155,7 +157,6 @@ def main():
 
         if i % 30 == 0:
             save_checkpoint(results)
-            print(f"💾 Checkpoint đã lưu ({len(results)} câu).")
 
     df_out = pd.DataFrame(results)
     df_out.to_csv(OUTPUT_FILE, index=False, encoding="utf-8-sig")
