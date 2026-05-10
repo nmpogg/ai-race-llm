@@ -4,11 +4,10 @@ from transformers import pipeline, BitsAndBytesConfig
 
 class LLMService:
     """
-    Local LLM wrapper dùng Qwen2.5-3B-Instruct với 4-bit quantization.
-    Chạy được trên Colab T4 free, dùng ~2.5GB VRAM.
+    Kaggle 2x T4 (32GB VRAM): Qwen2.5-14B-Instruct 4-bit (~9GB VRAM).
     """
 
-    def __init__(self, model_path: str = "Qwen/Qwen2.5-3B-Instruct"):
+    def __init__(self, model_path: str = "Qwen/Qwen2.5-14B-Instruct"):
         print(f"🔄 Đang khởi tạo model: {model_path} (4-bit quantized)...")
 
         bnb_config = BitsAndBytesConfig(
