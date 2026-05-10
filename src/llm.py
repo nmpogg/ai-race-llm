@@ -4,14 +4,11 @@ from transformers import pipeline, BitsAndBytesConfig
 
 class LLMService:
     """
-    Local LLM wrapper dùng Qwen2.5-7B-Instruct với 4-bit quantization.
-    Chạy được trên Colab T4 (16GB VRAM), dùng ~5-6GB VRAM.
-
-    Cài thêm trước khi chạy:
-        pip install bitsandbytes>=0.43.0 accelerate>=0.27.0
+    Local LLM wrapper dùng Qwen2.5-3B-Instruct với 4-bit quantization.
+    Chạy được trên Colab T4 free, dùng ~2.5GB VRAM.
     """
 
-    def __init__(self, model_path: str = "Qwen/Qwen2.5-7B-Instruct"):
+    def __init__(self, model_path: str = "Qwen/Qwen2.5-3B-Instruct"):
         print(f"🔄 Đang khởi tạo model: {model_path} (4-bit quantized)...")
 
         bnb_config = BitsAndBytesConfig(
@@ -25,7 +22,10 @@ class LLMService:
             "text-generation",
             model=model_path,
             device_map="auto",
-            model_kwargs={"quantization_config": bnb_config},
+            model_kwargs={
+                "quantization_config": bnb_config,
+                "low_cpu_mem_usage": True,
+            },
         )
         self.pipe.tokenizer.padding_side = "left"
         print("✅ Model đã sẵn sàng.")
