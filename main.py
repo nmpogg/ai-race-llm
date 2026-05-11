@@ -20,7 +20,7 @@ INDEX_DIR        = "./data/knowledge"
 API_CSV          = "/kaggle/working/api_config.csv"
 EXAMPLE_DIR      = "./data/example_data"
 USE_ENSEMBLE     = True
-DATA_DRIVE       = "/content/drive/MyDrive/ai-race-data"  # chỉ dùng trên Colab
+DATA_DRIVE       = "/content/drive/MyDrive/ai-race-data"
 
 # ── ĐỌC FILE ──────────────────────────────────────────────────────────────────
 def _read_input(path: str) -> pd.DataFrame:
@@ -37,11 +37,9 @@ def _read_input(path: str) -> pd.DataFrame:
 def load_services():
     print("=" * 60)
 
-    # Load LLM TRƯỚC để chiếm VRAM trước khi load các model khác
     print("1/5 Khởi tạo LLM (Qwen2.5-7B 4-bit)...")
     llm = LLMService()
 
-    # Test generate ngay để phát hiện lỗi sớm
     test_out = llm.generate("1+1 bằng mấy? Trả lời:", max_tokens=10)
     print(f"   🧪 Test generate: '{test_out}'")
     if not test_out.strip():
@@ -83,16 +81,31 @@ def load_services():
     return router, doc_agent, api_agent
 
 # ── PROCESS ONE ROW ───────────────────────────────────────────────────────────
+def _parse_note(note_raw) -> str:
+    """Trả về chuỗi note sạch, hoặc rỗng nếu không hợp lệ."""
+    if note_raw is None:
+        return ""
+    if isinstance(note_raw, float) and pd.isna(note_raw):
+        return ""
+    s = str(note_raw).strip()
+    return "" if s.lower() == "nan" else s
+
+
 def process_row(row, router, doc_agent, api_agent) -> dict:
-    qid      = str(row.get("id", ""))
-    question = str(row.get("question", "")).strip()
-    note     = str(row.get("note", "")).strip()
+    qid = str(row.get("id", ""))
+
+    # FIX: tên cột thực tế trong Test_data.xlsx là "fun_question"
+    question = str(row.get("fun_question", row.get("question", ""))).strip()
 
     t0 = time.time()
+
+    # Bước 1: router phân loại dựa trên question
     func_code = router.classify(question)
 
+    # Bước 2: chỉ dùng note SAU KHI router đã chọn call_document (đúng yêu cầu đề)
     if func_code == "call_document":
-        raw_result = doc_agent.process(question, note=note)
+        note_str = _parse_note(row.get("note", ""))
+        raw_result = doc_agent.process(question, note=note_str)
     else:
         raw_result = api_agent.process(question)
 
@@ -123,12 +136,12 @@ def load_checkpoint() -> set:
             pass
     return set()
 
+
 def save_checkpoint(results: list):
     os.makedirs(os.path.dirname(CHECKPOINT_FILE), exist_ok=True)
     pd.DataFrame(results).to_csv(
         CHECKPOINT_FILE, index=False, encoding="utf-8-sig"
     )
-    # Thử lưu lên Drive nếu đang chạy trên Colab
     drive_ck = f"{DATA_DRIVE}/output/checkpoint.csv"
     try:
         if os.path.exists(DATA_DRIVE):
@@ -145,7 +158,6 @@ def main(router=None, doc_agent=None, api_agent=None):
     df_input = _read_input(INPUT_FILE)
     print(f"📋 Tổng số câu hỏi: {len(df_input)}")
 
-    # Nhận services từ ngoài, không tự load lại
     if router is None or doc_agent is None or api_agent is None:
         router, doc_agent, api_agent = load_services()
 

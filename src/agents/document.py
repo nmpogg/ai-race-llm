@@ -34,12 +34,10 @@ class DocAgent:
         )
         print("DocAgent: Sẵn sàng.")
 
-    # ── TOKENIZE ──────────────────────────────────────────────────────────────
     @staticmethod
     def _tok(text: str) -> list:
         return re.findall(r"\w+", str(text).lower())
 
-    # ── QUERY EXPANSION ───────────────────────────────────────────────────────
     _EXPAND_PROMPT = (
         "Trích xuất 5-8 từ khóa/cụm từ quan trọng nhất từ câu hỏi dưới đây "
         "để tìm kiếm trong tài liệu kỹ thuật.\n"
@@ -58,7 +56,6 @@ class DocAgent:
             print(f"⚠️ Query expansion lỗi: {e}")
         return question
 
-    # ── RETRIEVAL ─────────────────────────────────────────────────────────────
     def retrieve_and_rerank(
         self,
         question: str,
@@ -68,7 +65,6 @@ class DocAgent:
     ) -> str:
         expanded = self._expand_query(question)
 
-        # FAISS dense search
         q_emb = self.embed_model.encode([expanded], convert_to_numpy=True)
         faiss.normalize_L2(q_emb)
         _, faiss_idx = self.faiss_index.search(q_emb, top_k_retrieve)
@@ -76,14 +72,12 @@ class DocAgent:
             self.chunks[i] for i in faiss_idx[0] if i < len(self.chunks)
         ]
 
-        # BM25 sparse search
         bm25_scores = self.bm25.get_scores(self._tok(expanded))
         bm25_idx = np.argsort(bm25_scores)[::-1][:top_k_retrieve]
         bm25_results = [
             self.chunks[i] for i in bm25_idx if bm25_scores[i] > 0
         ]
 
-        # Note-aware search
         note_results = []
         note_str = str(note).strip()
         if note_str:
@@ -94,7 +88,6 @@ class DocAgent:
                 self.chunks[i] for i in n_idx[0] if i < len(self.chunks)
             ]
 
-        # Deduplicate
         seen: set = set()
         combined: list = []
         for chunk in note_results + faiss_results + bm25_results:
@@ -106,7 +99,6 @@ class DocAgent:
         if not combined:
             return ""
 
-        # Rerank
         scores = self.reranker.predict([[question, c] for c in combined])
         top_chunks = [
             c
@@ -116,7 +108,6 @@ class DocAgent:
         ]
         return "\n\n---\n\n".join(top_chunks)
 
-    # ── OUTPUT PARSING ────────────────────────────────────────────────────────
     @staticmethod
     def _extract_letters(text: str) -> list:
         seen: set = set()
@@ -128,7 +119,6 @@ class DocAgent:
         return result
 
     def _parse_output(self, raw: str):
-        # 1. JSON chuẩn
         try:
             m = re.search(r"\{[^{}]*\}", raw, re.DOTALL)
             if m:
@@ -139,7 +129,6 @@ class DocAgent:
         except Exception:
             pass
 
-        # 2. Dòng cuối
         last_lines = [
             ln.strip() for ln in raw.strip().splitlines() if ln.strip()
         ][-3:]
@@ -148,7 +137,6 @@ class DocAgent:
             if letters and len(letters) <= 4:
                 return len(letters), ",".join(letters)
 
-        # 3. Pattern
         for pat in [
             r"(?:đáp án|answer|kết quả|result|chọn)[^\w]*([ABCD](?:[,\s]+[ABCD])*)",
             r"(?:chính xác|đúng)[^\w]*([ABCD](?:[,\s]+[ABCD])*)",
@@ -163,7 +151,6 @@ class DocAgent:
 
         return None, None
 
-    # ── PROMPTS ───────────────────────────────────────────────────────────────
     _COT_PROMPT = """{fewshot}Bạn là chuyên gia trả lời câu hỏi trắc nghiệm dựa trên tài liệu.
 
 [TÀI LIỆU]:
@@ -196,7 +183,12 @@ JSON:"""
 
     # ── MAIN PROCESS ──────────────────────────────────────────────────────────
     def process(self, question: str, note: str = "") -> str:
+        # FIX: question = câu hỏi thuần, note = options A/B/C/D
+        # Retrieve chỉ dùng câu hỏi (không lẫn options để tránh nhiễu BM25/FAISS)
+        # Prompt dùng full_question = câu hỏi + options
         note_str = str(note).strip()
+        full_question = f"{question}\n{note_str}" if note_str else question
+
         context = self.retrieve_and_rerank(question, note=note_str)
 
         fewshot_block = ""
@@ -206,23 +198,21 @@ JSON:"""
         ctx_short = context[:2500]
 
         if self.use_ensemble:
-            # 3 lần inference với prompt khác nhau
             prompts = [
                 self._COT_PROMPT.format(
                     fewshot=fewshot_block,
                     context=ctx_short,
-                    question=question,
+                    question=full_question,
                 ),
                 self._DIRECT_PROMPT.format(
                     fewshot=fewshot_block,
                     context=ctx_short,
-                    question=question,
+                    question=full_question,
                 ),
-                # Lần 3: CoT không few-shot để tránh nhiễu
                 self._COT_PROMPT.format(
                     fewshot="",
                     context=ctx_short,
-                    question=question,
+                    question=full_question,
                 ),
             ]
             max_tokens_list = [350, 80, 350]
@@ -233,7 +223,6 @@ JSON:"""
                 _, r = self._parse_output(raw)
                 answers.append(r)
 
-            # Vote: lấy đáp án xuất hiện nhiều nhất
             valid = [a for a in answers if a is not None]
             if valid:
                 counts = {}
@@ -249,7 +238,7 @@ JSON:"""
             prompt = self._COT_PROMPT.format(
                 fewshot=fewshot_block,
                 context=ctx_short,
-                question=question,
+                question=full_question,
             )
             raw = self.llm.generate(prompt, max_tokens=350)
             n, r = self._parse_output(raw)
@@ -260,7 +249,7 @@ JSON:"""
 
         # Retry cuối
         prompt_retry = (
-            f"Câu hỏi: {question}\n"
+            f"Câu hỏi: {full_question}\n"
             f"Tài liệu: {context[:800]}\n"
             f"Chỉ trả về đáp án (A/B/C/D): "
         )
