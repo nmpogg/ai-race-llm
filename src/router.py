@@ -6,13 +6,10 @@ class RouterAgent:
     def __init__(self, llm_service=None):
         self.llm = llm_service
 
-    # MCQ SIGNALS 
-    # Hard: có options A/B/C/D dạng option list
     _MCQ_HARD = [
-        r"(?<!\w)[aAbBcCdD][.)]\s{0,3}\S",   # a. / b) / C. dạng option
-        r"\b[ABCD]\s*[.)]\s*\w",             # A. hoặc B) viết hoa
+        r"(?<!\w)[aAbBcCdD][.)]\s{0,3}\S",
+        r"\b[ABCD]\s*[.)]\s*\w",
     ]
-    # Soft: hỏi về đáp án/phương án nhưng không có options rõ ràng
     _MCQ_SOFT = [
         r"đáp án (nào|đúng|sau|sau đây|dưới đây)",
         r"phương án (nào|đúng|sau|sau đây)",
@@ -22,10 +19,7 @@ class RouterAgent:
         r"trong (các|những) (đáp án|phương án|lựa chọn)",
         r"(tất cả|bao nhiêu).*(đúng|sai|chính xác)",
     ]
-
-    # API SIGNALS
     _API_HARD = [
-        # Domain acronyms
         r"\bttpm\w*\b", r"\bcbnv\b", r"\bnslđ\b", r"\bosdc\b",
         r"\bslnt\b", r"\bslsx\b", r"\bcpnc\b", r"\blcnt\b",
         r"\bkpi\b", r"\bsla\b", r"\botd\b", r"\bfpy\b", r"\bdpmo\b",
@@ -33,7 +27,6 @@ class RouterAgent:
         r"leakage rate", r"defect rate", r"yield rate",
         r"tr\.?\s*đồng", r"trđ\b", r"mm/người",
         r"\bpackage\b", r"presale[s]?", r"\bodc\b",
-        # Nghiệp vụ
         r"năng suất lao động",
         r"hiệu suất (tổng thể|thiết bị|lao động|sản xuất)",
         r"sản lượng (sản xuất|thực tế|kế hoạch|đầu ra|hoàn thành)",
@@ -58,8 +51,6 @@ class RouterAgent:
         r"quý [1-4]\s+(?:năm\s*)?20\d{2}",
         r"(?:tháng|t\.)\s*\d{1,2}\s*(?:đến|~|\-)\s*(?:tháng|t\.)?\s*\d{1,2}",
     ]
-
-    # LLM FALLBACK PROMPT 
     _LLM_PROMPT = (
         "Phân loại câu hỏi sau vào ĐÚNG MỘT nhãn:\n"
         '- "call_document": câu hỏi trắc nghiệm hoặc hỏi về quy định/khái niệm/lý thuyết\n'
@@ -69,13 +60,11 @@ class RouterAgent:
         "Nhãn:"
     )
 
-    # CLASSIFY
-
     def classify(self, question: str) -> str:
         text = str(question)
         text_lower = text.lower()
 
-        # Tầng 1: MCQ hard — có ít nhất 2 options A/B/C/D → chắc chắn document
+        # Tầng 1: MCQ hard — có ít nhất 2 options A/B/C/D
         mcq_hard = sum(1 for p in self._MCQ_HARD if re.search(p, text))
         if mcq_hard >= 2:
             return "call_document"
@@ -88,8 +77,8 @@ class RouterAgent:
         if api_total >= 2:
             return "call_api"
 
-        # API score = 1 nhưng không có MCQ soft → call_api
         mcq_soft = sum(1 for p in self._MCQ_SOFT if re.search(p, text_lower))
+
         if api_total == 1 and mcq_soft == 0:
             return "call_api"
 
@@ -97,7 +86,7 @@ class RouterAgent:
         if mcq_soft >= 2:
             return "call_document"
 
-        # Tầng 4: LLM fallback khi tín hiệu mơ hồ
+        # Tầng 4: LLM fallback
         if self.llm is not None:
             try:
                 prompt = self._LLM_PROMPT.format(question=text[:600])
@@ -109,5 +98,8 @@ class RouterAgent:
             except Exception as e:
                 print(f"⚠️ Router LLM lỗi: {e}")
 
-        # Default: nếu có bất kỳ soft MCQ signal → document, còn lại → api
-        return "call_document" if mcq_soft >= 1 else "call_api"
+        # Default: chỉ call_api nếu có ít nhất 1 API signal
+        # Còn lại → call_document (an toàn hơn vì MCQ chiếm ~50% test)
+        if api_total >= 1:
+            return "call_api"
+        return "call_document"
