@@ -2,19 +2,19 @@ import json
 import os
 import pickle
 import re
-
 import faiss
 import numpy as np
 from sentence_transformers import CrossEncoder, SentenceTransformer
 
 
 class DocAgent:
+
     def __init__(
         self,
         llm_service,
         index_dir: str = "./index_data",
         fewshot_loader=None,
-        use_ensemble: bool = True,
+        use_ensemble: bool = False,   # ĐỔI default → False để tiết kiệm thời gian
     ):
         self.llm = llm_service
         self.fewshot = fewshot_loader
@@ -25,13 +25,9 @@ class DocAgent:
             self.chunks = pickle.load(f)
         with open(os.path.join(index_dir, "bm25.pkl"), "rb") as f:
             self.bm25 = pickle.load(f)
-        self.faiss_index = faiss.read_index(
-            os.path.join(index_dir, "faiss.index")
-        )
+        self.faiss_index = faiss.read_index(os.path.join(index_dir, "faiss.index"))
         self.embed_model = SentenceTransformer("keepitreal/vietnamese-sbert")
-        self.reranker = CrossEncoder(
-            "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
-        )
+        self.reranker = CrossEncoder("cross-encoder/mmarco-mMiniLMv2-L12-H384-v1")
         print("DocAgent: Sẵn sàng.")
 
     @staticmethod
@@ -49,7 +45,7 @@ class DocAgent:
     def _expand_query(self, question: str) -> str:
         try:
             prompt = self._EXPAND_PROMPT.format(question=question[:500])
-            keywords = self.llm.generate(prompt, max_tokens=60).strip()
+            keywords = self.llm.generate(prompt, max_tokens=40).strip()  # Giảm max_tokens
             if 5 < len(keywords) < 200:
                 return f"{question} {keywords}"
         except Exception as e:
@@ -60,33 +56,26 @@ class DocAgent:
         self,
         question: str,
         note: str = "",
-        top_k_retrieve: int = 30,
-        top_k_rerank: int = 8,
+        top_k_retrieve: int = 15,   # Giảm từ 20 → 15
+        top_k_rerank: int = 4,      # Giảm từ 5 → 4
     ) -> str:
         expanded = self._expand_query(question)
-
         q_emb = self.embed_model.encode([expanded], convert_to_numpy=True)
         faiss.normalize_L2(q_emb)
         _, faiss_idx = self.faiss_index.search(q_emb, top_k_retrieve)
-        faiss_results = [
-            self.chunks[i] for i in faiss_idx[0] if i < len(self.chunks)
-        ]
+        faiss_results = [self.chunks[i] for i in faiss_idx[0] if i < len(self.chunks)]
 
         bm25_scores = self.bm25.get_scores(self._tok(expanded))
         bm25_idx = np.argsort(bm25_scores)[::-1][:top_k_retrieve]
-        bm25_results = [
-            self.chunks[i] for i in bm25_idx if bm25_scores[i] > 0
-        ]
+        bm25_results = [self.chunks[i] for i in bm25_idx if bm25_scores[i] > 0]
 
         note_results = []
         note_str = str(note).strip()
         if note_str:
             n_emb = self.embed_model.encode([note_str], convert_to_numpy=True)
             faiss.normalize_L2(n_emb)
-            _, n_idx = self.faiss_index.search(n_emb, 5)
-            note_results = [
-                self.chunks[i] for i in n_idx[0] if i < len(self.chunks)
-            ]
+            _, n_idx = self.faiss_index.search(n_emb, 3)
+            note_results = [self.chunks[i] for i in n_idx[0] if i < len(self.chunks)]
 
         seen: set = set()
         combined: list = []
@@ -99,12 +88,10 @@ class DocAgent:
         if not combined:
             return ""
 
+        combined = combined[:20]
         scores = self.reranker.predict([[question, c] for c in combined])
         top_chunks = [
-            c
-            for _, c in sorted(zip(scores, combined), reverse=True)[
-                :top_k_rerank
-            ]
+            c for _, c in sorted(zip(scores, combined), reverse=True)[:top_k_rerank]
         ]
         return "\n\n---\n\n".join(top_chunks)
 
@@ -119,7 +106,6 @@ class DocAgent:
         return result
 
     def _parse_output(self, raw: str):
-        # 1. JSON chuẩn
         try:
             m = re.search(r"\{[^{}]*\}", raw, re.DOTALL)
             if m:
@@ -130,16 +116,12 @@ class DocAgent:
         except Exception:
             pass
 
-        # 2. Dòng cuối
-        last_lines = [
-            ln.strip() for ln in raw.strip().splitlines() if ln.strip()
-        ][-3:]
+        last_lines = [ln.strip() for ln in raw.strip().splitlines() if ln.strip()][-3:]
         for line in reversed(last_lines):
             letters = self._extract_letters(line)
             if letters and len(letters) <= 4:
                 return len(letters), ",".join(letters)
 
-        # 3. Pattern
         for pat in [
             r"(?:đáp án|answer|kết quả|result|chọn)[^\w]*([ABCD](?:[,\s]+[ABCD])*)",
             r"(?:chính xác|đúng)[^\w]*([ABCD](?:[,\s]+[ABCD])*)",
@@ -153,6 +135,8 @@ class DocAgent:
                     return len(letters), ",".join(letters)
 
         return None, None
+
+    # ── PROMPTS ───────────────────────────────────────────────────────────────
 
     _COT_PROMPT = """{fewshot}Bạn là chuyên gia trả lời câu hỏi trắc nghiệm dựa trên tài liệu.
 
@@ -195,8 +179,6 @@ Chỉ trả về đúng 1 ký tự là đáp án đúng nhất (A, B, C hoặc D
     def process(self, question: str, note: str = "") -> str:
         note_str = str(note).strip()
         full_question = f"{question}\n{note_str}" if note_str else question
-
-        # Retrieve dùng câu hỏi thuần, không lẫn options
         context = self.retrieve_and_rerank(question, note=note_str)
 
         fewshot_block = ""
@@ -206,25 +188,13 @@ Chỉ trả về đúng 1 ký tự là đáp án đúng nhất (A, B, C hoặc D
         ctx_short = context[:2500]
 
         if self.use_ensemble:
+            # Ensemble 3 lần: chỉ bật khi có GPU mạnh và không bị phạt tốc độ
             prompts = [
-                self._COT_PROMPT.format(
-                    fewshot=fewshot_block,
-                    context=ctx_short,
-                    question=full_question,
-                ),
-                self._DIRECT_PROMPT.format(
-                    fewshot=fewshot_block,
-                    context=ctx_short,
-                    question=full_question,
-                ),
-                self._COT_PROMPT.format(
-                    fewshot="",
-                    context=ctx_short,
-                    question=full_question,
-                ),
+                self._COT_PROMPT.format(fewshot=fewshot_block, context=ctx_short, question=full_question),
+                self._DIRECT_PROMPT.format(fewshot=fewshot_block, context=ctx_short, question=full_question),
+                self._COT_PROMPT.format(fewshot="", context=ctx_short, question=full_question),
             ]
-            max_tokens_list = [350, 80, 350]
-
+            max_tokens_list = [300, 60, 300]
             answers = []
             for prompt, max_tok in zip(prompts, max_tokens_list):
                 raw = self.llm.generate(prompt, max_tokens=max_tok)
@@ -238,44 +208,33 @@ Chỉ trả về đúng 1 ký tự là đáp án đúng nhất (A, B, C hoặc D
                     counts[a] = counts.get(a, 0) + 1
                 best = max(counts, key=lambda x: counts[x])
                 letters = self._extract_letters(best)
-                return json.dumps(
-                    {"numbers": len(letters), "result": best},
-                    ensure_ascii=False,
-                )
-        else:
-            # Lần 1: CoT
-            prompt = self._COT_PROMPT.format(
-                fewshot=fewshot_block,
-                context=ctx_short,
-                question=full_question,
-            )
-            raw = self.llm.generate(prompt, max_tokens=350)
-            n, r = self._parse_output(raw)
-            if r:
-                return json.dumps({"numbers": n, "result": r}, ensure_ascii=False)
+                return json.dumps({"numbers": len(letters), "result": best}, ensure_ascii=False)
 
-            # Lần 2: Direct (CoT thất bại)
-            prompt_direct = self._DIRECT_PROMPT.format(
-                fewshot="",
-                context=ctx_short,
-                question=full_question,
-            )
-            raw2 = self.llm.generate(prompt_direct, max_tokens=80)
-            n2, r2 = self._parse_output(raw2)
-            if r2:
-                return json.dumps({"numbers": n2, "result": r2}, ensure_ascii=False)
+        # ── FAST PATH: 1 lần COT, fallback direct, fallback force ─────────────
+        prompt = self._COT_PROMPT.format(
+            fewshot=fewshot_block, context=ctx_short, question=full_question
+        )
+        raw = self.llm.generate(prompt, max_tokens=300)
+        n, r = self._parse_output(raw)
+        if r:
+            return json.dumps({"numbers": n, "result": r}, ensure_ascii=False)
 
-        # Lần 3: Force — chỉ yêu cầu 1 ký tự
+        # Fallback: direct (không fewshot để tiết kiệm token → nhanh hơn)
+        prompt_direct = self._DIRECT_PROMPT.format(
+            fewshot="", context=ctx_short, question=full_question
+        )
+        raw2 = self.llm.generate(prompt_direct, max_tokens=60)
+        n2, r2 = self._parse_output(raw2)
+        if r2:
+            return json.dumps({"numbers": n2, "result": r2}, ensure_ascii=False)
+
+        # Fallback cuối: force với context rút gọn
         prompt_force = self._FORCE_PROMPT.format(
-            question=full_question,
-            context=context[:800],
+            question=full_question, context=context[:600]
         )
         raw_force = self.llm.generate(prompt_force, max_tokens=5)
         letters = self._extract_letters(raw_force)
         if letters:
-            return json.dumps(
-                {"numbers": 1, "result": letters[0]},
-                ensure_ascii=False,
-            )
+            return json.dumps({"numbers": 1, "result": letters[0]}, ensure_ascii=False)
 
         return json.dumps({"numbers": 1, "result": "A"}, ensure_ascii=False)
