@@ -119,6 +119,7 @@ class DocAgent:
         return result
 
     def _parse_output(self, raw: str):
+        # 1. JSON chuẩn
         try:
             m = re.search(r"\{[^{}]*\}", raw, re.DOTALL)
             if m:
@@ -129,6 +130,7 @@ class DocAgent:
         except Exception:
             pass
 
+        # 2. Dòng cuối
         last_lines = [
             ln.strip() for ln in raw.strip().splitlines() if ln.strip()
         ][-3:]
@@ -137,6 +139,7 @@ class DocAgent:
             if letters and len(letters) <= 4:
                 return len(letters), ",".join(letters)
 
+        # 3. Pattern
         for pat in [
             r"(?:đáp án|answer|kết quả|result|chọn)[^\w]*([ABCD](?:[,\s]+[ABCD])*)",
             r"(?:chính xác|đúng)[^\w]*([ABCD](?:[,\s]+[ABCD])*)",
@@ -181,14 +184,19 @@ Chỉ trả về JSON: {{"numbers": 1, "result": "A"}}
 
 JSON:"""
 
-    # MAIN PROCESS 
+    _FORCE_PROMPT = """Câu hỏi trắc nghiệm:
+{question}
+
+Tài liệu tham khảo:
+{context}
+
+Chỉ trả về đúng 1 ký tự là đáp án đúng nhất (A, B, C hoặc D):"""
+
     def process(self, question: str, note: str = "") -> str:
-        # FIX: question = câu hỏi thuần, note = options A/B/C/D
-        # Retrieve chỉ dùng câu hỏi (không lẫn options để tránh nhiễu BM25/FAISS)
-        # Prompt dùng full_question = câu hỏi + options
         note_str = str(note).strip()
         full_question = f"{question}\n{note_str}" if note_str else question
 
+        # Retrieve dùng câu hỏi thuần, không lẫn options
         context = self.retrieve_and_rerank(question, note=note_str)
 
         fewshot_block = ""
@@ -235,6 +243,7 @@ JSON:"""
                     ensure_ascii=False,
                 )
         else:
+            # Lần 1: CoT
             prompt = self._COT_PROMPT.format(
                 fewshot=fewshot_block,
                 context=ctx_short,
@@ -243,21 +252,29 @@ JSON:"""
             raw = self.llm.generate(prompt, max_tokens=350)
             n, r = self._parse_output(raw)
             if r:
-                return json.dumps(
-                    {"numbers": n, "result": r}, ensure_ascii=False
-                )
+                return json.dumps({"numbers": n, "result": r}, ensure_ascii=False)
 
-        # Retry cuối
-        prompt_retry = (
-            f"Câu hỏi: {full_question}\n"
-            f"Tài liệu: {context[:800]}\n"
-            f"Chỉ trả về đáp án (A/B/C/D): "
+            # Lần 2: Direct (CoT thất bại)
+            prompt_direct = self._DIRECT_PROMPT.format(
+                fewshot="",
+                context=ctx_short,
+                question=full_question,
+            )
+            raw2 = self.llm.generate(prompt_direct, max_tokens=80)
+            n2, r2 = self._parse_output(raw2)
+            if r2:
+                return json.dumps({"numbers": n2, "result": r2}, ensure_ascii=False)
+
+        # Lần 3: Force — chỉ yêu cầu 1 ký tự
+        prompt_force = self._FORCE_PROMPT.format(
+            question=full_question,
+            context=context[:800],
         )
-        raw_retry = self.llm.generate(prompt_retry, max_tokens=20)
-        letters = self._extract_letters(raw_retry)
+        raw_force = self.llm.generate(prompt_force, max_tokens=5)
+        letters = self._extract_letters(raw_force)
         if letters:
             return json.dumps(
-                {"numbers": len(letters), "result": ",".join(letters)},
+                {"numbers": 1, "result": letters[0]},
                 ensure_ascii=False,
             )
 

@@ -9,7 +9,7 @@ class APIAgent:
         self.retriever = retriever
         self.fewshot = fewshot_loader
 
-    # DATE EXTRACTION 
+    # ── DATE EXTRACTION ───────────────────────────────────────────────────────
     def _extract_dates(self, question: str) -> tuple[str, str]:
         q = question.lower()
 
@@ -26,14 +26,26 @@ class APIAgent:
             )
             return self._ms(y1, m1), self._me(y2, m2)
 
-        # Single month: tháng X/YYYY hoặc tX/YYYY
-        m = re.search(r"(?:tháng|t)\s*(\d{1,2})[/\-](\d{4})", q)
+        # Single month đầy đủ: tháng X/YYYY
+        m = re.search(r"tháng\s*(\d{1,2})[/\-](20\d{2})", q)
+        if m:
+            mo, yr = int(m.group(1)), int(m.group(2))
+            return self._ms(yr, mo), self._me(yr, mo)
+
+        # Viết tắt: T8/2025 hoặc t8/2025 (có khoảng trắng hoặc không)
+        m = re.search(r"\bt(\d{1,2})[/\-](20\d{2})\b", q)
+        if m:
+            mo, yr = int(m.group(1)), int(m.group(2))
+            return self._ms(yr, mo), self._me(yr, mo)
+
+        # Dạng: trong T9/2025
+        m = re.search(r"trong\s+t(\d{1,2})[/\-](20\d{2})", q)
         if m:
             mo, yr = int(m.group(1)), int(m.group(2))
             return self._ms(yr, mo), self._me(yr, mo)
 
         # Quarter: quý X/YYYY hoặc qX-YYYY
-        m = re.search(r"(?:quý|q)\s*([1-4])[/\-\s](\d{4})", q)
+        m = re.search(r"(?:quý|q)\s*([1-4])[/\-\s](20\d{2})", q)
         if m:
             qtr, yr = int(m.group(1)), int(m.group(2))
             sm = (qtr - 1) * 3 + 1
@@ -45,15 +57,23 @@ class APIAgent:
             yr = int(m.group(1))
             return f"{yr}-01-01", f"{yr}-12-31"
 
+        # Fallback: chỉ có YYYY (ví dụ "trong 2025")
+        m = re.search(r"\b(20\d{2})\b", q)
+        if m:
+            yr = int(m.group(1))
+            return f"{yr}-01-01", f"{yr}-12-31"
+
         return "", ""
 
     def _ms(self, yr: int, mo: int) -> str:
+        mo = max(1, min(12, mo))
         return f"{yr}-{mo:02d}-01"
 
     def _me(self, yr: int, mo: int) -> str:
+        mo = max(1, min(12, mo))
         return f"{yr}-{mo:02d}-{calendar.monthrange(yr, mo)[1]}"
 
-    # ENUM EXTRACTION 
+    # ── ENUM EXTRACTION ───────────────────────────────────────────────────────
     ORG_ALIASES = {
         "ttpmqt": "TTPMQT", "ttpmtcs": "TTPMTCS", "ttpmvt": "TTPMVT",
         "ttpmcnm": "TTPMCNM", "ttpmcds": "TTPMCDS", "ttcndt": "TTCNDT",
@@ -72,6 +92,24 @@ class APIAgent:
         "hold": "hold", "tạm dừng": "hold",
         "closed": "closed", "đóng": "closed", "kết thúc": "closed",
         "open": "open", "mở": "open",
+    }
+    ASSET_GROUP_MAP = {
+        "dịch vụ cntt": "Dịch vụ CNTT",
+        "công cụ dụng cụ": "Công cụ dụng cụ",
+        "máy móc thiết bị": "Máy móc thiết bị",
+        "phần mềm": "Phần mềm",
+        "tài sản cố định": "Tài sản cố định",
+    }
+    LCNT_OPTION_MAP = {
+        "đtrr": "ĐTRR", "mstt": "MSTT", "chlt": "CHLT",
+        "chlc": "CHLC", "đthc": "ĐTHC",
+    }
+    BID_PLAN_TYPE_MAP = {
+        "đấu thầu không qua mạng": "Đấu thầu không qua mạng",
+        "đấu thầu qua mạng": "Đấu thầu qua mạng",
+        "chỉ định thầu": "Chỉ định thầu",
+        "mua sắm trực tiếp": "Mua sắm trực tiếp",
+        "tự thực hiện": "Tự thực hiện",
     }
 
     def _extract_orgs(self, question: str) -> list[str]:
@@ -94,7 +132,7 @@ class APIAgent:
                 seen.add(val)
         return found
 
-    # API SELECTION VIA LLM 
+    # ── API SELECTION ─────────────────────────────────────────────────────────
     _SELECT_PROMPT = (
         "{fewshot}"
         "Chọn API phù hợp nhất với câu hỏi bên dưới.\n\n"
@@ -127,14 +165,14 @@ class APIAgent:
         for fc in top_df["func_code"].tolist():
             if fc.lower() in raw.lower():
                 return fc
-        # Khớp gần đúng (bỏ khoảng trắng)
+        # Khớp gần đúng
         raw_clean = re.sub(r"\s+", "", raw).lower()
         for fc in top_df["func_code"].tolist():
             if re.sub(r"\s+", "", fc).lower() in raw_clean:
                 return fc
         return None
 
-    # BODY BUILDER
+    # ── BODY BUILDER ──────────────────────────────────────────────────────────
     def _build_body(self, question: str, endpoint_config_str: str) -> dict:
         try:
             cfg = json.loads(endpoint_config_str)
@@ -146,12 +184,14 @@ class APIAgent:
         orgs = self._extract_orgs(question)
         proj_types = self._extract_enum(question, self.PROJECT_TYPE_MAP)
         proj_status = self._extract_enum(question, self.PROJECT_STATUS_MAP)
+        asset_groups = self._extract_enum(question, self.ASSET_GROUP_MAP)
+        lcnt_options = self._extract_enum(question, self.LCNT_OPTION_MAP)
+        bid_plan_types = self._extract_enum(question, self.BID_PLAN_TYPE_MAP)
 
         body = {}
         for p in all_params:
             name = p.get("name", "")
             ptype = p.get("type", "")
-            alias = p.get("alias", name)
 
             if name in ("fromDate", "from_date", "startDate"):
                 body[name] = from_date
@@ -163,6 +203,14 @@ class APIAgent:
                 body[name] = proj_types
             elif name == "projectStatus":
                 body[name] = proj_status
+            elif name == "assetGroup":
+                body[name] = asset_groups
+            elif name == "lcntOption":
+                body[name] = lcnt_options
+            elif name == "lcntOptionDoing":
+                body[name] = lcnt_options
+            elif name == "bidPlanType":
+                body[name] = bid_plan_types
             elif name == "isCompany":
                 body[name] = not bool(orgs)
             elif name == "page":
@@ -174,14 +222,12 @@ class APIAgent:
 
         return body
 
-    # MAIN PROCESS
+    # ── MAIN PROCESS ──────────────────────────────────────────────────────────
     def process(self, question: str) -> str:
-        # Retrieve top-5 APIs
         top_df = self.retriever.get_top_apis_df(question, k=5)
         if top_df.empty:
             return "{}"
 
-        # LLM chọn API tốt nhất
         selected_fc = self._select_api(question, top_df)
 
         if selected_fc is None:
@@ -190,7 +236,6 @@ class APIAgent:
             rows = top_df[top_df["func_code"] == selected_fc]
             selected_row = rows.iloc[0] if not rows.empty else top_df.iloc[0]
 
-        # Lấy path từ endpoint config
         try:
             cfg = json.loads(selected_row["Endpoint config"])
             path = cfg["request"]["path"]

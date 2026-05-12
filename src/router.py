@@ -7,8 +7,8 @@ class RouterAgent:
         self.llm = llm_service
 
     _MCQ_HARD = [
-        r"(?<!\w)[aAbBcCdD][.)]\s{0,3}\S",
-        r"\b[ABCD]\s*[.)]\s*\w",
+        r"(?<!\w)[aAbBcCdD][.)]\\s{0,3}\\S",
+        r"\\b[ABCD]\\s*[.)]\\s*\\w",
     ]
     _MCQ_SOFT = [
         r"đáp án (nào|đúng|sau|sau đây|dưới đây)",
@@ -18,6 +18,21 @@ class RouterAgent:
         r"(chọn|lựa chọn)\s+(đáp án|phương án|câu trả lời)",
         r"trong (các|những) (đáp án|phương án|lựa chọn)",
         r"(tất cả|bao nhiêu).*(đúng|sai|chính xác)",
+        # Câu hỏi từ/về tài liệu
+        r"theo tài liệu",
+        r"trong tài liệu",
+        r"tài liệu (public|nội bộ|số|mã)",
+        r"public_\d+",
+        r"theo (quy định|quy trình|tiêu chuẩn|hướng dẫn|quy chuẩn)",
+        r"(mục đích|chức năng|vai trò|nhiệm vụ).*(là gì|như thế nào)",
+        r"được (định nghĩa|hiểu|mô tả|quy định) là",
+        r"(khái niệm|định nghĩa|ý nghĩa) của",
+        r"(hệ thống|phần mềm|công cụ|thiết bị).*(là gì|dùng để|có chức năng)",
+        r"(bước|giai đoạn|quy trình|quy tắc|nguyên tắc).*(nào|thế nào|như thế nào)",
+        r"(đặc điểm|đặc tính|tính năng|ưu điểm|nhược điểm)",
+        r"(so sánh|khác nhau|giống nhau).*(giữa|với)",
+        r"(khi nào|trường hợp nào|điều kiện nào)",
+        r"(tối đa|tối thiểu|giới hạn|ngưỡng).*(là|bằng|được quy định)",
     ]
     _API_HARD = [
         r"\bttpm\w*\b", r"\bcbnv\b", r"\bnslđ\b", r"\bosdc\b",
@@ -39,6 +54,16 @@ class RouterAgent:
         r"api\s+(nào|cần|để|phù hợp|cho)",
         r"cấu hình\s+api",
         r"endpoint\b",
+        # Thêm các signal API rõ ràng
+        r"\bnslđ\s*(kh|thực tế|theo|lũy kế)",
+        r"(thực tập sinh|tts)\b",
+        r"\bcr\b.*(hạn|tiến độ|dự án)",
+        r"tài sản (mua mới|cấp phát|thanh lý|khấu hao)",
+        r"(tuyển dụng|onboard|off-?board)",
+        r"(chứng chỉ|bằng cấp|đào tạo).*(số lượng|bao nhiêu|thống kê)",
+        r"(doanh số|oanh thu|lợi nhuận).*(bao nhiêu|thực tế|kế hoạch)",
+        r"(lũy kế|trong kỳ|kỳ này|kỳ trước)",
+        r"(so sánh|chênh lệch|tăng|giảm).*(tháng|quý|năm).*(trước|so với)",
     ]
     _API_TIME = [
         r"trong năm 20\d{2}",
@@ -50,11 +75,14 @@ class RouterAgent:
         r"\bt\d{1,2}/20\d{2}\b",
         r"quý [1-4]\s+(?:năm\s*)?20\d{2}",
         r"(?:tháng|t\.)\s*\d{1,2}\s*(?:đến|~|\-)\s*(?:tháng|t\.)?\s*\d{1,2}",
+        # Thêm pattern T8/2025, t9/2025 viết tắt không có khoảng trắng
+        r"\bt\d{1,2}[/\-]20\d{2}\b",
+        r"trong\s+t\d{1,2}[/\-]20\d{2}",
     ]
     _LLM_PROMPT = (
         "Phân loại câu hỏi sau vào ĐÚNG MỘT nhãn:\n"
-        '- "call_document": câu hỏi trắc nghiệm hoặc hỏi về quy định/khái niệm/lý thuyết\n'
-        '- "call_api": câu hỏi cần lấy số liệu thực tế (KPI, doanh thu, sản lượng, cấu hình API)\n\n'
+        '- "call_document": câu hỏi trắc nghiệm hoặc hỏi về quy định/khái niệm/lý thuyết/tài liệu\n'
+        '- "call_api": câu hỏi cần lấy số liệu thực tế (KPI, doanh thu, sản lượng, cấu hình API, thống kê theo thời gian)\n\n'
         "Chỉ trả về đúng 1 chuỗi: call_document hoặc call_api\n\n"
         "Câu hỏi: {question}\n\n"
         "Nhãn:"
@@ -77,16 +105,20 @@ class RouterAgent:
         if api_total >= 2:
             return "call_api"
 
+        # Tầng 3: MCQ soft signal
         mcq_soft = sum(1 for p in self._MCQ_SOFT if re.search(p, text_lower))
 
         if api_total == 1 and mcq_soft == 0:
             return "call_api"
 
-        # Tầng 3: MCQ soft signal rõ ràng
         if mcq_soft >= 2:
             return "call_document"
 
-        # Tầng 4: LLM fallback
+        # Tầng 4: MCQ soft 1 điểm nhưng không có API signal → call_document
+        if mcq_soft >= 1 and api_total == 0:
+            return "call_document"
+
+        # Tầng 5: LLM fallback
         if self.llm is not None:
             try:
                 prompt = self._LLM_PROMPT.format(question=text[:600])
@@ -98,8 +130,6 @@ class RouterAgent:
             except Exception as e:
                 print(f"⚠️ Router LLM lỗi: {e}")
 
-        # Default: chỉ call_api nếu có ít nhất 1 API signal
-        # Còn lại → call_document (an toàn hơn vì MCQ chiếm ~50% test)
         if api_total >= 1:
             return "call_api"
         return "call_document"
