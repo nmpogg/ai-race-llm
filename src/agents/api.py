@@ -1,13 +1,3 @@
-"""
-api.py — APIAgent
-
-Cải tiến so với bản cũ:
-  1. Retrieve top-5 APIs thay vì top-3
-  2. LLM chọn API dựa trên mô tả + ví dụ câu hỏi mẫu
-  3. Few-shot động từ example_data inject vào prompt chọn API
-  4. Body building giữ nguyên rule-based (ổn định hơn LLM cho structured data)
-"""
-
 import json
 import re
 import calendar

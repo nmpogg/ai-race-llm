@@ -181,7 +181,7 @@ Chỉ trả về JSON: {{"numbers": 1, "result": "A"}}
 
 JSON:"""
 
-    # ── MAIN PROCESS ──────────────────────────────────────────────────────────
+    # MAIN PROCESS 
     def process(self, question: str, note: str = "") -> str:
         # FIX: question = câu hỏi thuần, note = options A/B/C/D
         # Retrieve chỉ dùng câu hỏi (không lẫn options để tránh nhiễu BM25/FAISS)
