@@ -106,10 +106,10 @@ def process_row(row, router, doc_agent, api_agent) -> dict:
         function_result = str(raw_result)
 
     return {
-        "id":              qid,
-        "function_code":   func_code,
-        "function_result": function_result,
-        "time_response":   elapsed,
+    "id":         qid,
+    "func_code":  func_code,
+    "func_param": function_result,
+    "time":       elapsed,
     }
 
 
@@ -162,10 +162,10 @@ def main(router=None, doc_agent=None, api_agent=None):
         except Exception as e:
             print(f"⚠️ Lỗi id={row.get('id','?')}: {e}")
             results.append({
-                "id":              str(row.get("id", "")),
-                "function_code":   "call_document",
-                "function_result": '{"numbers": 1, "result": "A"}',
-                "time_response":   0.0,
+                "id":         str(row.get("id", "")),
+                "func_code":  "call_document",
+                "func_param": '{"numbers": 1, "result": "A"}',
+                "time":       0.0,
             })
         if i % 30 == 0:
             save_checkpoint(results)
