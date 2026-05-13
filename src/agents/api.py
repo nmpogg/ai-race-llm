@@ -1,25 +1,22 @@
 import json
 import re
 import calendar
-from functools import lru_cache
 
 
 class APIAgent:
 
     def __init__(self, llm_service, retriever, fewshot_loader=None):
-        self.llm = llm_service
+        self.llm       = llm_service
         self.retriever = retriever
-        self.fewshot = fewshot_loader
-        self._path_cache: dict = {}   # cache path theo func_code
+        self.fewshot   = fewshot_loader
 
-    # ── DATE EXTRACTION ───────────────────────────────────────────────────────
+    # DATE EXTRACTION 
 
     def _extract_dates(self, question: str) -> tuple[str, str]:
         q = question.lower()
         m = re.search(
             r"(?:tháng|t)\s*(\d{1,2})[/\-](\d{4})\s*(?:-|->|đến|~)\s*"
-            r"(?:tháng|t)?\s*(\d{1,2})[/\-](\d{4})",
-            q,
+            r"(?:tháng|t)?\s*(\d{1,2})[/\-](\d{4})", q,
         )
         if m:
             m1, y1, m2, y2 = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
@@ -61,7 +58,7 @@ class APIAgent:
         mo = max(1, min(12, mo))
         return f"{yr}-{mo:02d}-{calendar.monthrange(yr, mo)[1]}"
 
-    # ── EXTRACT HELPERS ───────────────────────────────────────────────────────
+    # EXTRACT HELPERS 
 
     def _extract_type(self, question: str) -> int:
         q = question.lower()
@@ -98,41 +95,43 @@ class APIAgent:
                 return canon
         return "VTIT"
 
-    # ── ENUM MAPS ─────────────────────────────────────────────────────────────
+    # ENUM MAPS
 
     ORG_ALIASES = {
-        "ttpmqt": "TTPMQT", "ttpmtcs": "TTPMTCS", "ttpmvt": "TTPMVT",
-        "ttpmcnm": "TTPMCNM", "ttpmcds": "TTPMCDS", "ttcndt": "TTCNDT",
-        "ttcnđt": "TTCNDT", "tt cnđt": "TTCNDT",
-        "pm qt": "TTPMQT", "pm tcs": "TTPMTCS", "pm vt": "TTPMVT",
-        "pm cnm": "TTPMCNM", "pm cds": "TTPMCDS",
+        "ttpmqt":  "TTPMQT",  "ttpmtcs": "TTPMTCS", "ttpmvt":  "TTPMVT",
+        "ttpmcnm": "TTPMCNM", "ttpmcds": "TTPMCDS", "ttcndt":  "TTCNDT",
+        "ttcnđt":  "TTCNDT",  "tt cnđt": "TTCNDT",
+        "pm qt":   "TTPMQT",  "pm tcs":  "TTPMTCS", "pm vt":   "TTPMVT",
+        "pm cnm":  "TTPMCNM", "pm cds":  "TTPMCDS",
     }
 
     ORG_CODE_MAP = {
-        "ttpmqt": "TTPMQT", "ttpmtcs": "TTPMTCS", "ttpmvt": "TTPMVT",
-        "ttpmcnm": "TTPMCNM", "ttpmcds": "TTPMCDS", "ttcndt": "TTCNDT",
-        "ttcnđt": "TTCNDT", "vtit": "VTIT",
+        "ttpmqt":  "TTPMQT",  "ttpmtcs": "TTPMTCS", "ttpmvt":  "TTPMVT",
+        "ttpmcnm": "TTPMCNM", "ttpmcds": "TTPMCDS", "ttcndt":  "TTCNDT",
+        "ttcnđt":  "TTCNDT",  "vtit":    "VTIT",
     }
 
     PROJECT_TYPE_MAP = {
-        "package": "Package", "gói": "Package",
-        "osdc": "osdc", "odc/osdc": "odc/osdc", "odc": "odc",
-        "t&m": "T&M", "time and material": "T&M",
-        "presale": "presales", "presales": "presales",
+        "package":          "Package",   "gói":              "Package",
+        "osdc":             "osdc",      "odc/osdc":         "odc/osdc",
+        "odc":              "odc",       "t&m":              "T&M",
+        "time and material": "T&M",      "presale":          "presales",
+        "presales":         "presales",
     }
 
     PROJECT_STATUS_MAP = {
         "in-progress": "in-progress", "đang thực hiện": "in-progress",
-        "hold": "hold", "tạm dừng": "hold",
-        "closed": "closed", "đóng": "closed", "kết thúc": "closed",
-        "open": "open", "mở": "open",
+        "hold":        "hold",        "tạm dừng":        "hold",
+        "closed":      "closed",      "đóng":            "closed",
+        "kết thúc":    "closed",      "open":            "open",
+        "mở":          "open",
     }
 
     ASSET_GROUP_MAP = {
-        "dịch vụ cntt": "Dịch vụ CNTT",
+        "dịch vụ cntt":    "Dịch vụ CNTT",
         "công cụ dụng cụ": "Công cụ dụng cụ",
         "máy móc thiết bị": "Máy móc thiết bị",
-        "phần mềm": "Phần mềm",
+        "phần mềm":        "Phần mềm",
         "tài sản cố định": "Tài sản cố định",
     }
 
@@ -148,10 +147,25 @@ class APIAgent:
 
     BID_PLAN_TYPE_MAP = {
         "đấu thầu không qua mạng": "Đấu thầu không qua mạng",
-        "đấu thầu qua mạng": "Đấu thầu qua mạng",
-        "chỉ định thầu": "Chỉ định thầu",
-        "mua sắm trực tiếp": "Mua sắm trực tiếp",
-        "tự thực hiện": "Tự thực hiện",
+        "đấu thầu qua mạng":       "Đấu thầu qua mạng",
+        "chỉ định thầu":           "Chỉ định thầu",
+        "mua sắm trực tiếp":       "Mua sắm trực tiếp",
+        "tự thực hiện":            "Tự thực hiện",
+    }
+
+    # TARGET CODE MAP: dành cho 10 GET APIs KD/TC 
+    # targetCode xuất hiện trong URL path của GET APIs
+    # Giá trị mặc định lấy từ path template trong endpoint config
+    TARGET_CODE_MAP = {
+        "doanh thu":                 "DT",
+        "doanh thu dịch vụ":         "DT",
+        "doanh thu thuần":           "DT",
+        "slnt":                      "SLNT",
+        "sản lượng nghiệm thu":      "SLNT",
+        "giá trị hợp đồng":          "GTHĐKM",
+        "hợp đồng ký mới":           "GTHĐKM",
+        "lợi nhuận gộp":             "LNG",
+        "lợi nhuận":                 "LNG",
     }
 
     def _extract_orgs(self, question: str) -> list[str]:
@@ -174,7 +188,15 @@ class APIAgent:
                 seen.add(val)
         return found
 
-    # ── LLM: CHỌN API + EXTRACT PARAMS TRONG 1 LẦN GỌI ──────────────────────
+    def _extract_target_code(self, question: str, default: str = "DT") -> str:
+        """Extract targetCode từ câu hỏi, fallback về default từ path template."""
+        q = question.lower()
+        for kw, code in self.TARGET_CODE_MAP.items():
+            if kw in q:
+                return code
+        return default
+
+    # LLM: CHỌN API + EXTRACT PARAMS 
 
     _SELECT_AND_BODY_PROMPT = (
         "{fewshot}"
@@ -195,8 +217,6 @@ class APIAgent:
     )
 
     def _select_and_extract_params(self, question: str, top_df) -> tuple[str | None, dict]:
-        """LLM vừa chọn API vừa extract params trong 1 lần gọi."""
-        # Rút gọn mô tả API để giảm token → nhanh hơn
         api_list_str = "\n---\n".join(
             f"func_code: {row['func_code']}\n"
             f"Mô tả: {row.get('description', '')[:200]}\n"
@@ -213,14 +233,14 @@ class APIAgent:
             api_list=api_list_str,
             question=question,
         )
-        raw = self.llm.generate(prompt, max_tokens=250).strip()  # Giảm từ 300 → 250
+        raw = self.llm.generate(prompt, max_tokens=250).strip()
 
         selected_fc = None
-        llm_params = {}
+        llm_params  = {}
         try:
             m = re.search(r"\{.*\}", raw, re.DOTALL)
             if m:
-                obj = json.loads(m.group(0))
+                obj    = json.loads(m.group(0))
                 fc_raw = obj.get("func_code", "")
                 for fc in top_df["func_code"].tolist():
                     if fc.lower() in fc_raw.lower():
@@ -242,7 +262,7 @@ class APIAgent:
 
         return selected_fc, llm_params
 
-    # ── BODY BUILDER ──────────────────────────────────────────────────────────
+    # BODY BUILDER 
 
     def _build_body(
         self,
@@ -255,9 +275,9 @@ class APIAgent:
         except Exception:
             return {}
 
-        all_params = cfg.get("required_params", []) + cfg.get("optional_params", [])
+        all_params     = cfg.get("required_params", []) + cfg.get("optional_params", [])
         from_date, to_date = self._extract_dates(question)
-        orgs = self._extract_orgs(question)
+        orgs           = self._extract_orgs(question)
         proj_types     = self._extract_enum(question, self.PROJECT_TYPE_MAP)
         proj_status    = self._extract_enum(question, self.PROJECT_STATUS_MAP)
         asset_groups   = self._extract_enum(question, self.ASSET_GROUP_MAP)
@@ -274,6 +294,7 @@ class APIAgent:
         for p in all_params:
             name  = p.get("name", "")
             ptype = p.get("type", "")
+            desc  = p.get("description", "")
 
             if name in ("fromDate", "from_date", "startDate"):
                 body[name] = from_date
@@ -317,10 +338,37 @@ class APIAgent:
                 body[name] = 0
             elif name == "size":
                 body[name] = 20
+            elif name == "isProbation":
+                # isProbation: thực tập sinh = 1, chính thức = 0, mặc định None (lấy hết)
+                q = question.lower()
+                if re.search(r"thực tập|tts\b|probation", q):
+                    body[name] = 1
+                elif re.search(r"chính thức|biên chế", q):
+                    body[name] = 0
+                else:
+                    body[name] = None
+            elif name == "getIsProbation":
+                q = question.lower()
+                body[name] = bool(re.search(r"thực tập|tts\b|probation", q))
+            elif name == "targetCode":
+                # Lấy default từ path template nếu có
+                path = cfg.get("request", {}).get("path", "")
+                tc_match = re.search(r"targetCode=([A-Z]+)", path)
+                default_tc = tc_match.group(1) if tc_match else "DT"
+                body[name] = self._extract_target_code(question, default=default_tc)
+            elif name == "cycleType":
+                # cycleType: month/quarter/year
+                q = question.lower()
+                if re.search(r"quý|quarter", q):
+                    body[name] = "quarter"
+                elif re.search(r"năm|year", q):
+                    body[name] = "year"
+                else:
+                    body[name] = "month"
             elif "List" in ptype or "list" in ptype.lower():
                 body[name] = []
 
-        # Merge LLM params: chỉ điền vào param còn rỗng/None
+        # Merge LLM params
         if llm_params:
             for k, v in llm_params.items():
                 if k in body and body[k] in ([], "", None):
@@ -330,10 +378,53 @@ class APIAgent:
 
         return body
 
-    # ── MAIN PROCESS ──────────────────────────────────────────────────────────
+    # BUILD PATH: Handle GET APIs với query params trong URL 
+
+    def _build_path_with_params(
+        self,
+        cfg: dict,
+        body: dict,
+        question: str,
+    ) -> str:
+        """
+        FIX QUAN TRỌNG: 10 GET APIs dùng query params trong URL path.
+        _build_body chỉ build POST body, không update path.
+        GET APIs có pattern: /path?param1=value1&param2=value2
+        -> Cần inject summary_date, org_code, target_code vào path.
+        """
+        method = cfg.get("request", {}).get("method", "POST")
+        path   = cfg.get("request", {}).get("path", "")
+
+        if method != "GET":
+            return path
+
+        # Với GET: update các query params trong path
+        # summaryDate: dùng to_date (ngày cuối kỳ)
+        summary_date = body.get("summaryDate", "")
+        if summary_date and re.search(r"summaryDate=[\d\-]+", path):
+            path = re.sub(r"summaryDate=[\d\-]+", f"summaryDate={summary_date}", path)
+
+        # organizationCode
+        org_code = body.get("organizationCode", "VTIT")
+        if org_code and re.search(r"organizationCode=\w+", path):
+            path = re.sub(r"organizationCode=\w+", f"organizationCode={org_code}", path)
+
+        # targetCode
+        target_code = body.get("targetCode", "DT")
+        if target_code and re.search(r"targetCode=\w+", path):
+            path = re.sub(r"targetCode=\w+", f"targetCode={target_code}", path)
+
+        # cycleType
+        cycle_type = body.get("cycleType", "month")
+        if cycle_type and re.search(r"cycleType=\w+", path):
+            path = re.sub(r"cycleType=\w+", f"cycleType={cycle_type}", path)
+
+        return path
+
+    # MAIN PROCESS 
 
     def process(self, question: str) -> str:
-        top_df = self.retriever.get_top_apis_df(question, k=5)  # Giảm từ 7 → 5
+        top_df = self.retriever.get_top_apis_df(question, k=5)
         if top_df.empty:
             return "{}"
 
@@ -346,9 +437,17 @@ class APIAgent:
 
         try:
             cfg = json.loads(selected_row["Endpoint config"])
-            path = cfg["request"]["path"]
         except Exception:
             return "{}"
 
         body = self._build_body(question, selected_row["Endpoint config"], llm_params=llm_params)
+
+        # Với GET APIs, inject params vào URL path thay vì body
+        path = self._build_path_with_params(cfg, body, question)
+
+        # GET APIs không cần body (params đã trong URL)
+        method = cfg.get("request", {}).get("method", "POST")
+        if method == "GET":
+            return json.dumps({"path": path, "body": {}}, ensure_ascii=False)
+
         return json.dumps({"path": path, "body": body}, ensure_ascii=False)

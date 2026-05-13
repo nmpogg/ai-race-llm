@@ -1,5 +1,6 @@
 import re
 
+
 class RouterAgent:
 
     def __init__(self, llm_service=None):
@@ -10,16 +11,29 @@ class RouterAgent:
         r"\b[ABCD]\s*[.)]\s*\w",
     ]
 
+    # DOC_OVERRIDE: ưu tiên tuyệt đối, check TRƯỚC api_hard
+    # SLA trong tài liệu (public/td) phân biệt với SLA là KPI API
     _DOC_OVERRIDE = [
         r"giá (bán|mua|tại mỏ|đến chân|chưa vat|chưa thuế)",
-        r"trong (td|public)[_\s]*[\w\d]*",
+        r"giá\s+(thi công|lắp đặt|gia công)",
+        r"trong\s+(td|public)[_\s]*[\w\d]+",
         r"\btd\s*\d+\b",
         r"\bpublic[_\s]*\d+\b",
+        r"public_\d+",
         r"lần lượt là bao nhiêu",
-        r"(sla|uptime|availability).*(được quy định|yêu cầu|phải đạt|là bao nhiêu)",
+        # SLA trong tài liệu/quy định: luôn là call_document
+        # Khác với SLA là KPI API (thường đi kèm thực tế/kỳ/tháng cụ thể)
+        r"sla.*(được quy định|yêu cầu|phải đạt|là bao nhiêu|___|\.\.\.|bao nhiêu %)",
+        r"(uptime|availability).*(được quy định|yêu cầu|phải đạt|là bao nhiêu)",
+        r"(sla|uptime).*(trong\s+public|theo\s+public|public\s*\d+|trong\s+td|theo\s+td)",
         r"(khối lượng|diện tích|thể tích).*(hạng mục|công trình|móng|mái|m³|m²)",
-        r"(kích thước|thông số kỹ thuật).*(là|gồm|như thế nào)",
+        r"(kích thước|thông số kỹ thuật).*(là|gồm|như thế nào|bao nhiêu)",
         r"(mỏ đá|mỏ cát|mỏ sỏi|mỏ\s+\w+).*(giá|bao nhiêu)",
+        r"có bao nhiêu mặt hàng",
+        r"loại đá nào.*(giá|đồng)",
+        r"(độ phân giải|cycle time|thể tích in|vùng in)",
+        r"(điền khuyết|điền vào chỗ trống|____)",
+        r"số lượng tấm pin",
     ]
 
     _MCQ_SOFT = [
@@ -49,16 +63,21 @@ class RouterAgent:
         r"trong (td|public)[_\s]*[\w\d]*",
         r"\btd\s*\d+\b",
         r"\bpublic[_\s]*\d+\b",
-        r"(sla|uptime).*(được quy định|yêu cầu|phải đạt)",
+        r"sla.*(được quy định|yêu cầu|phải đạt)",
         r"(khối lượng|diện tích|thể tích).*(hạng mục|công trình|móng|mái)",
         r"(mỏ đá|mỏ cát|mỏ\s+\w+).*(giá|bao nhiêu)",
+        r"(độ phân giải|cycle time|thể tích in)",
+        r"(điền khuyết|____)",
+        r"có bao nhiêu mặt hàng",
     ]
 
     _API_HARD = [
         r"\bttpm\w*\b", r"\bcbnv\b", r"\bnslđ\b", r"\bosdc\b",
         r"\bslnt\b", r"\bslsx\b", r"\bcpnc\b", r"\blcnt\b",
-        r"\bkpi\b", r"\bsla\b", r"\botd\b", r"\bfpy\b", r"\bdpmo\b",
+        r"\bkpi\b", r"\botd\b", r"\bfpy\b", r"\bdpmo\b",
         r"\bocs\b", r"\boee\b", r"\btakt\b",
+        # SLA chỉ là API_HARD khi đi kèm với số liệu thực tế (không có "quy định/yêu cầu")
+        r"\bsla\b.*(thực tế|kỳ này|kỳ trước|tháng|quý|năm|đơn vị|ttpm)",
         r"leakage rate", r"defect rate", r"yield rate",
         r"tr\.?\s*đồng", r"trđ\b", r"mm/người",
         r"\bpackage\b", r"presale[s]?", r"\bodc\b",
@@ -102,30 +121,31 @@ class RouterAgent:
     _LLM_PROMPT = (
         "Phân loại câu hỏi sau vào ĐÚNG MỘT nhãn:\n"
         '- "call_document": câu hỏi trắc nghiệm hoặc hỏi về quy định/khái niệm/lý thuyết/tài liệu/giá cả sản phẩm\n'
-        '- "call_api": câu hỏi cần lấy số liệu thực tế từ hệ thống (KPI, doanh thu, sản lượng, nhân sự, cấu hình API)\n\n'
+        '- "call_api": câu hỏi cần lấy số liệu thực tế từ hệ thống (KPI, doanh thu, sản lượng, nhân sự)\n\n'
         "Chỉ trả về đúng 1 chuỗi: call_document hoặc call_api\n\n"
         "Câu hỏi: {question}\n\n"
         "Nhãn:"
     )
 
     def classify(self, question: str) -> str:
-        text = str(question)
+        text       = str(question)
         text_lower = text.lower()
 
-        # Tầng 1: MCQ hard — có ít nhất 2 options A/B/C/D
+        # Tầng 1: MCQ hard — có ít nhất 2 options A/B/C/D trong câu hỏi
         mcq_hard = sum(1 for p in self._MCQ_HARD if re.search(p, text))
         if mcq_hard >= 2:
             return "call_document"
 
-        # Tầng 2: Doc override — câu hỏi giá/tài liệu cụ thể → call_document ngay
+        # Tầng 2: Doc override — check TRƯỚC api_hard để tránh false positive
+        # (SLA, giá bán, TD... đều là call_document dù có time signal)
         doc_override = sum(1 for p in self._DOC_OVERRIDE if re.search(p, text_lower))
         if doc_override >= 1:
             return "call_document"
 
         # Tầng 3: API hard signal
-        api_score = sum(1 for p in self._API_HARD if re.search(p, text_lower))
+        api_score  = sum(1 for p in self._API_HARD if re.search(p, text_lower))
         time_score = sum(1 for p in self._API_TIME if re.search(p, text_lower))
-        api_total = api_score + time_score * 2
+        api_total  = api_score + time_score * 2
 
         if api_total >= 2:
             return "call_api"
@@ -140,7 +160,7 @@ class RouterAgent:
         if mcq_soft >= 1 and api_total == 0:
             return "call_document"
 
-        # Tầng 4: LLM fallback
+        # Tầng 4: LLM fallback — cho câu ambiguous
         if self.llm is not None:
             try:
                 prompt = self._LLM_PROMPT.format(question=text[:600])

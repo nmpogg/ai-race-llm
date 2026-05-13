@@ -14,10 +14,10 @@ class DocAgent:
         llm_service,
         index_dir: str = "./index_data",
         fewshot_loader=None,
-        use_ensemble: bool = False,   # ĐỔI default → False để tiết kiệm thời gian
+        use_ensemble: bool = False,
     ):
-        self.llm = llm_service
-        self.fewshot = fewshot_loader
+        self.llm          = llm_service
+        self.fewshot      = fewshot_loader
         self.use_ensemble = use_ensemble
 
         print("DocAgent: Đang load Hybrid Retrieval...")
@@ -27,57 +27,62 @@ class DocAgent:
             self.bm25 = pickle.load(f)
         self.faiss_index = faiss.read_index(os.path.join(index_dir, "faiss.index"))
         self.embed_model = SentenceTransformer("keepitreal/vietnamese-sbert")
-        self.reranker = CrossEncoder("cross-encoder/mmarco-mMiniLMv2-L12-H384-v1")
+        self.reranker    = CrossEncoder("cross-encoder/mmarco-mMiniLMv2-L12-H384-v1")
         print("DocAgent: Sẵn sàng.")
 
     @staticmethod
     def _tok(text: str) -> list:
         return re.findall(r"\w+", str(text).lower())
 
-    _EXPAND_PROMPT = (
-        "Trích xuất 5-8 từ khóa/cụm từ quan trọng nhất từ câu hỏi dưới đây "
-        "để tìm kiếm trong tài liệu kỹ thuật.\n"
-        "Chỉ trả về các từ khóa cách nhau bằng dấu phẩy, không giải thích.\n\n"
-        "Câu hỏi: {question}\n\n"
-        "Từ khóa:"
-    )
+    def _build_search_query(self, question: str, note: str) -> str:
+        """
+        Tạo search query từ question + note MÀ KHÔNG gọi LLM.
+        - Note chứa A/B/C/D options là signal ngữ nghĩa cho retrieval
+        - Kết hợp question + note text (bỏ ký tự A, B, C, D prefix)
+        """
+        if not note:
+            return question
 
-    def _expand_query(self, question: str) -> str:
-        try:
-            prompt = self._EXPAND_PROMPT.format(question=question[:500])
-            keywords = self.llm.generate(prompt, max_tokens=40).strip()  # Giảm max_tokens
-            if 5 < len(keywords) < 200:
-                return f"{question} {keywords}"
-        except Exception as e:
-            print(f"⚠️ Query expansion lỗi: {e}")
-        return question
+        # Trích xuất text từ các options trong note (bỏ prefix A, B, C, D)
+        option_texts = re.findall(r'\b[ABCD][,.\)]\s*(.+?)(?=\n\s*[ABCD][,.\)]|\Z)', note, re.DOTALL)
+        option_content = " ".join(t.strip() for t in option_texts if t.strip())
+
+        if option_content:
+            return f"{question} {option_content}"
+        return f"{question} {note}"
 
     def retrieve_and_rerank(
         self,
         question: str,
         note: str = "",
-        top_k_retrieve: int = 15,   # Giảm từ 20 → 15
-        top_k_rerank: int = 4,      # Giảm từ 5 → 4
+        top_k_retrieve: int = 15,
+        top_k_rerank: int = 5,   # Tăng từ 4 → 5 để context phong phú hơn
     ) -> str:
-        expanded = self._expand_query(question)
-        q_emb = self.embed_model.encode([expanded], convert_to_numpy=True)
+        note_str = str(note).strip()
+
+        # Query chính: question + option texts (không cần LLM expansion)
+        main_query = self._build_search_query(question, note_str)
+
+        # FAISS semantic search
+        q_emb = self.embed_model.encode([main_query], convert_to_numpy=True)
         faiss.normalize_L2(q_emb)
         _, faiss_idx = self.faiss_index.search(q_emb, top_k_retrieve)
         faiss_results = [self.chunks[i] for i in faiss_idx[0] if i < len(self.chunks)]
 
-        bm25_scores = self.bm25.get_scores(self._tok(expanded))
-        bm25_idx = np.argsort(bm25_scores)[::-1][:top_k_retrieve]
+        # BM25 keyword search
+        bm25_scores = self.bm25.get_scores(self._tok(main_query))
+        bm25_idx    = np.argsort(bm25_scores)[::-1][:top_k_retrieve]
         bm25_results = [self.chunks[i] for i in bm25_idx if bm25_scores[i] > 0]
 
+        # Nếu question và note khác nhau nhiều: search thêm bằng question thuần
         note_results = []
-        note_str = str(note).strip()
-        if note_str:
-            n_emb = self.embed_model.encode([note_str], convert_to_numpy=True)
+        if note_str and len(note_str) > 20:
+            n_emb = self.embed_model.encode([question], convert_to_numpy=True)
             faiss.normalize_L2(n_emb)
-            _, n_idx = self.faiss_index.search(n_emb, 3)
+            _, n_idx = self.faiss_index.search(n_emb, 5)
             note_results = [self.chunks[i] for i in n_idx[0] if i < len(self.chunks)]
 
-        seen: set = set()
+        seen: set  = set()
         combined: list = []
         for chunk in note_results + faiss_results + bm25_results:
             key = chunk[:80]
@@ -88,8 +93,9 @@ class DocAgent:
         if not combined:
             return ""
 
-        combined = combined[:20]
-        scores = self.reranker.predict([[question, c] for c in combined])
+        combined = combined[:25]
+        # Rerank dùng question gốc (không dùng expanded query) để reranker chính xác hơn
+        scores    = self.reranker.predict([[question, c] for c in combined])
         top_chunks = [
             c for _, c in sorted(zip(scores, combined), reverse=True)[:top_k_rerank]
         ]
@@ -97,7 +103,7 @@ class DocAgent:
 
     @staticmethod
     def _extract_letters(text: str) -> list:
-        seen: set = set()
+        seen: set   = set()
         result: list = []
         for m in re.findall(r"[ABCD]", text.upper()):
             if m not in seen:
@@ -109,7 +115,7 @@ class DocAgent:
         try:
             m = re.search(r"\{[^{}]*\}", raw, re.DOTALL)
             if m:
-                obj = json.loads(m.group(0))
+                obj     = json.loads(m.group(0))
                 letters = self._extract_letters(str(obj.get("result", "")))
                 if letters:
                     return len(letters), ",".join(letters)
@@ -136,7 +142,8 @@ class DocAgent:
 
         return None, None
 
-    # ── PROMPTS ───────────────────────────────────────────────────────────────
+    # PROMPTS 
+    # thêm instruction về việc ưu tiên thông tin trong tài liệu
 
     _COT_PROMPT = """{fewshot}Bạn là chuyên gia trả lời câu hỏi trắc nghiệm dựa trên tài liệu.
 
@@ -144,10 +151,11 @@ class DocAgent:
 {context}
 
 [HƯỚNG DẪN]:
-1. Đọc kỹ câu hỏi và các đáp án.
-2. Tìm thông tin liên quan trong tài liệu cho từng đáp án.
-3. Loại trừ các đáp án sai.
-4. Kết luận bằng JSON: {{"numbers": <số đáp án đúng>, "result": "<chữ cái>"}}
+1. Đọc kỹ câu hỏi và TẤT CẢ các đáp án A, B, C, D.
+2. Tìm thông tin chính xác trong tài liệu cho từng đáp án — ưu tiên số liệu/từ ngữ khớp chính xác.
+3. Loại trừ đáp án sai dựa trên tài liệu.
+4. Có thể có 1 hoặc nhiều đáp án đúng.
+5. Kết luận bằng JSON: {{"numbers": <số đáp án đúng>, "result": "<chữ cái>"}}
    Ví dụ 1 đáp án: {{"numbers": 1, "result": "B"}}
    Ví dụ 2 đáp án: {{"numbers": 2, "result": "A,C"}}
    QUAN TRỌNG: JSON phải là dòng CUỐI CÙNG, không thêm gì sau đó.
@@ -157,7 +165,7 @@ class DocAgent:
 
 Suy luận:"""
 
-    _DIRECT_PROMPT = """{fewshot}Đọc tài liệu và chọn đáp án đúng (A/B/C/D).
+    _DIRECT_PROMPT = """{fewshot}Đọc tài liệu và chọn đáp án đúng.
 Chỉ trả về JSON: {{"numbers": 1, "result": "A"}}
 
 [TÀI LIỆU]:
@@ -177,18 +185,17 @@ Tài liệu tham khảo:
 Chỉ trả về đúng 1 ký tự là đáp án đúng nhất (A, B, C hoặc D):"""
 
     def process(self, question: str, note: str = "") -> str:
-        note_str = str(note).strip()
+        note_str      = str(note).strip()
         full_question = f"{question}\n{note_str}" if note_str else question
-        context = self.retrieve_and_rerank(question, note=note_str)
+        context       = self.retrieve_and_rerank(question, note=note_str)
 
         fewshot_block = ""
         if self.fewshot is not None:
             fewshot_block = self.fewshot.get_doc_fewshot(question)
 
-        ctx_short = context[:2500]
+        ctx_short = context[:3000]
 
         if self.use_ensemble:
-            # Ensemble 3 lần: chỉ bật khi có GPU mạnh và không bị phạt tốc độ
             prompts = [
                 self._COT_PROMPT.format(fewshot=fewshot_block, context=ctx_short, question=full_question),
                 self._DIRECT_PROMPT.format(fewshot=fewshot_block, context=ctx_short, question=full_question),
@@ -206,11 +213,11 @@ Chỉ trả về đúng 1 ký tự là đáp án đúng nhất (A, B, C hoặc D
                 counts = {}
                 for a in valid:
                     counts[a] = counts.get(a, 0) + 1
-                best = max(counts, key=lambda x: counts[x])
+                best    = max(counts, key=lambda x: counts[x])
                 letters = self._extract_letters(best)
                 return json.dumps({"numbers": len(letters), "result": best}, ensure_ascii=False)
 
-        # ── FAST PATH: 1 lần COT, fallback direct, fallback force ─────────────
+        # FAST PATH: COT → Direct → Force 
         prompt = self._COT_PROMPT.format(
             fewshot=fewshot_block, context=ctx_short, question=full_question
         )
@@ -219,7 +226,6 @@ Chỉ trả về đúng 1 ký tự là đáp án đúng nhất (A, B, C hoặc D
         if r:
             return json.dumps({"numbers": n, "result": r}, ensure_ascii=False)
 
-        # Fallback: direct (không fewshot để tiết kiệm token → nhanh hơn)
         prompt_direct = self._DIRECT_PROMPT.format(
             fewshot="", context=ctx_short, question=full_question
         )
@@ -228,12 +234,11 @@ Chỉ trả về đúng 1 ký tự là đáp án đúng nhất (A, B, C hoặc D
         if r2:
             return json.dumps({"numbers": n2, "result": r2}, ensure_ascii=False)
 
-        # Fallback cuối: force với context rút gọn
         prompt_force = self._FORCE_PROMPT.format(
-            question=full_question, context=context[:600]
+            question=full_question, context=context[:800]
         )
         raw_force = self.llm.generate(prompt_force, max_tokens=5)
-        letters = self._extract_letters(raw_force)
+        letters   = self._extract_letters(raw_force)
         if letters:
             return json.dumps({"numbers": 1, "result": letters[0]}, ensure_ascii=False)
 
