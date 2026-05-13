@@ -12,17 +12,17 @@ from src.agents.document import DocAgent
 from src.agents.api import APIAgent
 from src.retrieval.apiretriever import APIRetriever
 
-# CONFIG 
+# CONFIG
 INPUT_FILE       = "./data/test_data/Test_data.xlsx"
 OUTPUT_FILE      = "/kaggle/working/result.csv"
 CHECKPOINT_FILE  = "/kaggle/working/checkpoint.csv"
 INDEX_DIR        = "./data/knowledge"
 API_CSV          = "/kaggle/working/api_config.csv"
 EXAMPLE_DIR      = "./data/example_data"
-USE_ENSEMBLE     = True
+USE_ENSEMBLE     = False   # ĐỔI → False để tăng tốc (tắt ensemble 3×LLM)
 DATA_DRIVE       = "/content/drive/MyDrive/ai-race-data"
 
-# ĐỌC FILE 
+
 def _read_input(path: str) -> pd.DataFrame:
     if path.endswith((".xlsx", ".xls")):
         return pd.read_excel(path)
@@ -33,7 +33,7 @@ def _read_input(path: str) -> pd.DataFrame:
             continue
     raise ValueError(f"Không đọc được file: {path}")
 
-# LOAD SERVICES 
+
 def load_services():
     print("=" * 60)
 
@@ -80,9 +80,8 @@ def load_services():
     print("=" * 60)
     return router, doc_agent, api_agent
 
-# PROCESS ONE ROW 
+
 def _parse_note(note_raw) -> str:
-    """Trả về chuỗi note sạch, hoặc rỗng nếu không hợp lệ."""
     if note_raw is None:
         return ""
     if isinstance(note_raw, float) and pd.isna(note_raw):
@@ -93,16 +92,12 @@ def _parse_note(note_raw) -> str:
 
 def process_row(row, router, doc_agent, api_agent) -> dict:
     qid = str(row.get("id", ""))
-
-    # FIX: tên cột thực tế trong Test_data.xlsx là "fun_question"
     question = str(row.get("fun_question", row.get("question", ""))).strip()
 
     t0 = time.time()
 
-    # Bước 1: router phân loại dựa trên question
     func_code = router.classify(question)
 
-    # Bước 2: chỉ dùng note SAU KHI router đã chọn call_document (đúng yêu cầu đề)
     if func_code == "call_document":
         note_str = _parse_note(row.get("note", ""))
         raw_result = doc_agent.process(question, note=note_str)
@@ -120,11 +115,11 @@ def process_row(row, router, doc_agent, api_agent) -> dict:
     return {
         "id":              qid,
         "function_code":   func_code,
-        "function_result": function_result,
-        "time_response":   elapsed,
+        "function_result": function_result,   # Đúng tên cột theo đề bài
+        "time_response":   elapsed,           # Đúng tên cột theo đề bài
     }
 
-# CHECKPOINT 
+
 def load_checkpoint() -> set:
     if os.path.exists(CHECKPOINT_FILE):
         try:
@@ -151,7 +146,7 @@ def save_checkpoint(results: list):
     except Exception:
         print(f"💾 Checkpoint lưu local ({len(results)} câu).")
 
-# MAIN
+
 def main(router=None, doc_agent=None, api_agent=None):
     os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
 
