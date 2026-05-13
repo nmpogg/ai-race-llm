@@ -158,7 +158,7 @@ def main(router=None, doc_agent=None, api_agent=None):
         try:
             result = process_row(row, router, doc_agent, api_agent)
             results.append(result)
-            print(f"[{i}/{len(remaining)}] id={result['id']} → {result['function_code']} ({result['time_response']}s)")
+            print(f"[{i}/{len(remaining)}] id={result['id']} → {result['func_code']} ({result['time']}s)")
         except Exception as e:
             print(f"⚠️ Lỗi id={row.get('id','?')}: {e}")
             results.append({
