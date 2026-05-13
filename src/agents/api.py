@@ -10,7 +10,7 @@ class APIAgent:
         self.retriever = retriever
         self.fewshot   = fewshot_loader
 
-    # ── DATE EXTRACTION ───────────────────────────────────────────────────────
+    # DATE EXTRACTION 
 
     def _extract_dates(self, question: str) -> tuple[str, str]:
         q = question.lower()
@@ -58,7 +58,7 @@ class APIAgent:
         mo = max(1, min(12, mo))
         return f"{yr}-{mo:02d}-{calendar.monthrange(yr, mo)[1]}"
 
-    # ── EXTRACT HELPERS ───────────────────────────────────────────────────────
+    # EXTRACT HELPERS 
 
     def _extract_type(self, question: str) -> int:
         q = question.lower()
@@ -95,7 +95,7 @@ class APIAgent:
                 return canon
         return "VTIT"
 
-    # ── ENUM MAPS ─────────────────────────────────────────────────────────────
+    # ENUM MAPS
 
     ORG_ALIASES = {
         "ttpmqt":  "TTPMQT",  "ttpmtcs": "TTPMTCS", "ttpmvt":  "TTPMVT",
@@ -153,7 +153,7 @@ class APIAgent:
         "tự thực hiện":            "Tự thực hiện",
     }
 
-    # ── TARGET CODE MAP: dành cho 10 GET APIs KD/TC ──────────────────────────
+    # TARGET CODE MAP: dành cho 10 GET APIs KD/TC 
     # targetCode xuất hiện trong URL path của GET APIs
     # Giá trị mặc định lấy từ path template trong endpoint config
     TARGET_CODE_MAP = {
@@ -196,7 +196,7 @@ class APIAgent:
                 return code
         return default
 
-    # ── LLM: CHỌN API + EXTRACT PARAMS TRONG 1 LẦN GỌI ──────────────────────
+    # LLM: CHỌN API + EXTRACT PARAMS 
 
     _SELECT_AND_BODY_PROMPT = (
         "{fewshot}"
@@ -262,7 +262,7 @@ class APIAgent:
 
         return selected_fc, llm_params
 
-    # ── BODY BUILDER ──────────────────────────────────────────────────────────
+    # BODY BUILDER 
 
     def _build_body(
         self,
@@ -378,7 +378,7 @@ class APIAgent:
 
         return body
 
-    # ── BUILD PATH: Handle GET APIs với query params trong URL ────────────────
+    # BUILD PATH: Handle GET APIs với query params trong URL 
 
     def _build_path_with_params(
         self,
@@ -421,7 +421,7 @@ class APIAgent:
 
         return path
 
-    # ── MAIN PROCESS ──────────────────────────────────────────────────────────
+    # MAIN PROCESS 
 
     def process(self, question: str) -> str:
         top_df = self.retriever.get_top_apis_df(question, k=5)
@@ -442,7 +442,7 @@ class APIAgent:
 
         body = self._build_body(question, selected_row["Endpoint config"], llm_params=llm_params)
 
-        # FIX: Với GET APIs, inject params vào URL path thay vì body
+        # Với GET APIs, inject params vào URL path thay vì body
         path = self._build_path_with_params(cfg, body, question)
 
         # GET APIs không cần body (params đã trong URL)

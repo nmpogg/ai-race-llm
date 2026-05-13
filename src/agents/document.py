@@ -36,9 +36,8 @@ class DocAgent:
 
     def _build_search_query(self, question: str, note: str) -> str:
         """
-        Tạo search query tối ưu từ question + note MÀ KHÔNG gọi LLM.
-        - Tiết kiệm ~3-5s mỗi câu doc (40 tokens × 282 câu = đáng kể)
-        - Note chứa A/B/C/D options là signal ngữ nghĩa rất tốt cho retrieval
+        Tạo search query từ question + note MÀ KHÔNG gọi LLM.
+        - Note chứa A/B/C/D options là signal ngữ nghĩa cho retrieval
         - Kết hợp question + note text (bỏ ký tự A, B, C, D prefix)
         """
         if not note:
@@ -143,8 +142,8 @@ class DocAgent:
 
         return None, None
 
-    # ── PROMPTS ───────────────────────────────────────────────────────────────
-    # Cải tiến: thêm instruction rõ hơn về việc ưu tiên thông tin trong tài liệu
+    # PROMPTS 
+    # thêm instruction về việc ưu tiên thông tin trong tài liệu
 
     _COT_PROMPT = """{fewshot}Bạn là chuyên gia trả lời câu hỏi trắc nghiệm dựa trên tài liệu.
 
@@ -194,7 +193,6 @@ Chỉ trả về đúng 1 ký tự là đáp án đúng nhất (A, B, C hoặc D
         if self.fewshot is not None:
             fewshot_block = self.fewshot.get_doc_fewshot(question)
 
-        # Context đầy đủ hơn: 3000 chars thay vì 2500
         ctx_short = context[:3000]
 
         if self.use_ensemble:
@@ -219,7 +217,7 @@ Chỉ trả về đúng 1 ký tự là đáp án đúng nhất (A, B, C hoặc D
                 letters = self._extract_letters(best)
                 return json.dumps({"numbers": len(letters), "result": best}, ensure_ascii=False)
 
-        # ── FAST PATH: COT → Direct → Force ──────────────────────────────────
+        # FAST PATH: COT → Direct → Force 
         prompt = self._COT_PROMPT.format(
             fewshot=fewshot_block, context=ctx_short, question=full_question
         )

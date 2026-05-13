@@ -12,7 +12,7 @@ class RouterAgent:
     ]
 
     # DOC_OVERRIDE: ưu tiên tuyệt đối, check TRƯỚC api_hard
-    # Bổ sung: SLA trong tài liệu (public/td) phân biệt với SLA là KPI API
+    # SLA trong tài liệu (public/td) phân biệt với SLA là KPI API
     _DOC_OVERRIDE = [
         r"giá (bán|mua|tại mỏ|đến chân|chưa vat|chưa thuế)",
         r"giá\s+(thi công|lắp đặt|gia công)",
@@ -160,7 +160,7 @@ class RouterAgent:
         if mcq_soft >= 1 and api_total == 0:
             return "call_document"
 
-        # Tầng 4: LLM fallback — chỉ cho câu thực sự ambiguous
+        # Tầng 4: LLM fallback — cho câu ambiguous
         if self.llm is not None:
             try:
                 prompt = self._LLM_PROMPT.format(question=text[:600])

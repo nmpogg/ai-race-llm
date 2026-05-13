@@ -40,7 +40,7 @@ def load_services():
     print("1/5 Khởi tạo LLM...")
     llm = LLMService()
     test_out = llm.generate("1+1 bằng mấy? Trả lời:", max_tokens=10)
-    print(f"   🧪 Test: '{test_out}'")
+    print(f" Test: '{test_out}'")
     if not test_out.strip():
         raise RuntimeError("❌ LLM load thất bại!")
 
@@ -71,9 +71,8 @@ def _parse_note(note_raw) -> str:
     return "" if s.lower() == "nan" else s
 
 
-# ── KEY FIX: Note có A/B/C/D options → LUÔN là call_document ─────────────────
-# Phân tích 617 câu test: 282 câu có note, TẤT CẢ đều có A/B/C/D options
-# -> Nếu note không rỗng và có options A/B/C/D = chắc chắn call_document
+# KEY FIX: Note có A/B/C/D options → LUÔN là call_document 
+# -> Nếu note không rỗng và có options A/B/C/D = call_document
 # -> Bỏ qua router hoàn toàn: tiết kiệm LLM call + tránh route sai
 _NOTE_OPTION_RE = re.compile(r'\b[ABCD][,.\)]\s')
 
@@ -88,10 +87,6 @@ def process_row(row, router, doc_agent, api_agent) -> dict:
 
     t0 = time.time()
 
-    # ── PRE-CHECK NOTE: bỏ qua router hoàn toàn ─────────────────────────────
-    # Trong 617 câu: 282 có note, tất cả đều có A/B/C/D -> đều là call_document
-    # Phiên bản cũ: 103 câu trong số này rơi vào LLM_FALLBACK của router (rủi ro sai)
-    # Fix này đảm bảo 100% câu có note được xử lý đúng, và tiết kiệm ~3-5s/câu
     if note_str and _note_has_options(note_str):
         func_code  = "call_document"
         raw_result = doc_agent.process(question, note=note_str)
