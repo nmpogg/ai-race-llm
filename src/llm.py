@@ -30,6 +30,11 @@ class LLMService:
         )
         self.pipe.tokenizer.padding_side = "left"
 
+        # FIX: tránh conflict max_new_tokens vs max_length khi tokenizer.model_max_length quá nhỏ
+        if hasattr(self.pipe.tokenizer, 'model_max_length'):
+            if self.pipe.tokenizer.model_max_length < 4096:
+                self.pipe.tokenizer.model_max_length = 4096
+
         if torch.cuda.is_available():
             free, _ = torch.cuda.mem_get_info()
             print(f"   VRAM sau load: {free/1024**3:.1f}GB free")
@@ -44,6 +49,7 @@ class LLMService:
                 do_sample=False,
                 return_full_text=False,
                 pad_token_id=self.pipe.tokenizer.eos_token_id,
+                truncation=True,  # FIX: tránh warning khi input quá dài
             )
             return outputs[0]["generated_text"].strip()
         except Exception as e:
