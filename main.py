@@ -1,9 +1,13 @@
 import os
+import gc
 import time
 import csv
 import pandas as pd
-from src.preprocess.build_index import build_index
+import json
+import pickle
 from src.preprocess.pdf2md import process_pdf_data
+from src.preprocess.chunking import MarkdownChunker
+from src.preprocess.build_index import build_index
 from src.llm import LLMService
 from src.router import RouterAgent
 from src.retrieval.apiretriever import APIRetriever
@@ -13,9 +17,12 @@ from src.agents.document import DocAgent
 DIR_PDF_INPUT     = "./data/Document_config_data"
 DIR_MD_OUTPUT     = "./data/markdown"
 FILE_MASTER_MD    = "./data/markdown/corpus.md"
+DIR_CHUNK_DATA_JSON   = "./data/knowledge/chunks.json"
+DIR_CHUNK_DATA_PKL   = "./data/knowledge/chunks.pkl"
 DIR_INDEX_DATA    = "./data/knowledge" # faiss.index, chunks.pkl, bm25.pkl
 
 RUN_PDF_TO_MD = not os.path.exists(FILE_MASTER_MD)
+RUN_CHUNKING = not os.path.exists(DIR_CHUNK_DATA_JSON) and not os.path.exists(DIR_CHUNK_DATA_PKL)
 RUN_BUILD_INDEX = not (
     os.path.exists(DIR_INDEX_DATA) and 
     os.path.exists(os.path.join(DIR_INDEX_DATA, "faiss.index"))
@@ -31,6 +38,7 @@ router = None
 retriever = None
 api_agent = None
 doc_agent = None
+chunker = None
 
 def load_service():
     global llm_service, router, retriever, api_agent, doc_agent
@@ -39,9 +47,33 @@ def load_service():
     
     if RUN_PDF_TO_MD:
         process_pdf_data(DIR_PDF_INPUT, DIR_MD_OUTPUT, FILE_MASTER_MD)
+
+    chunks = None
+
+    if RUN_CHUNKING:
+        chunker = MarkdownChunker(max_chunk_size=3000)
+        chunks = list(chunker.stream_and_chunk(FILE_MASTER_MD))
+        print(f"Đã tạo thành công {len(chunks)} chunks!")
+
+        # lưu toàn bộ list chunks ra file .pkl
+        with open(DIR_CHUNK_DATA_PKL, "wb") as f:
+            pickle.dump(chunks, f)
         
+        # .json for check
+        with open(DIR_CHUNK_DATA_JSON, "w", encoding="utf-8") as f:
+            json.dump(chunks, f, ensure_ascii=False, indent=2)
+            
+        print(f"Đã lưu toàn bộ dữ liệu ra file: {DIR_CHUNK_DATA_PKL} và {DIR_CHUNK_DATA_JSON}")
+
     if RUN_BUILD_INDEX:
-        build_index(FILE_MASTER_MD, DIR_INDEX_DATA)
+        if chunks is None:
+            print("Đang nạp chunks từ file pickle để build index...")
+            with open(DIR_CHUNK_DATA_PKL, "rb") as f:
+                chunks = pickle.load(f)
+        build_index(chunks, DIR_INDEX_DATA)
+
+    del chunks
+    gc.collect()
     
     # load service
     print("Loading LLM Service, Router, API Retriever, API Agent, Document Agent...")
