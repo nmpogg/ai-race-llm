@@ -28,6 +28,11 @@ RUN_BUILD_INDEX = not (
     os.path.exists(os.path.join(DIR_INDEX_DATA, "faiss.index"))
 )
 
+MODEL_NAME = "Qwen/Qwen2.5-1.5B-Instruct"
+TOP_K_API = 5
+TOP_K_RETRIEVE = 10
+TOP_K_RERANK = 7
+
 FILE_TRAIN_DATA   = "./data/example_data/example_data.xlsx"
 FILE_TEST_DATA    = "./data/test_data/Test_data.xlsx"
 FILE_API_CONFIG   = "./data/API_config_data/Tài liệu config API.xlsx"
@@ -78,7 +83,7 @@ def load_service():
     
     # load service
     print("Loading LLM Service, Router, API Retriever, API Agent, Document Agent...")
-    llm_service = LLMService()
+    llm_service = LLMService(model_path=MODEL_NAME)
     router = RouterAgent()
     retriever = APIRetriever(FILE_API_CONFIG)
     
@@ -119,9 +124,9 @@ def eval():
         func_code = router.classify(question)
         
         if func_code == "call_api":
-            pred_param = api_agent.process(question)
+            pred_param = api_agent.process(question, top_k=TOP_K_API)
         else:
-            pred_param = doc_agent.process(question, note)
+            pred_param = doc_agent.process(question, note, top_k_retrieve=TOP_K_RETRIEVE, top_k_rerank=TOP_K_RERANK)
             
         time_response = int((time.time() - start_time) * 1000)
 

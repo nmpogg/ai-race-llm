@@ -16,9 +16,9 @@ class APIAgent:
             text = text[:-3]
         return text.strip()
 
-    def process(self, question):
+    def process(self, question, top_k=5):
         # top k API configs
-        api_configs = self.retriever.get_top_apis_config(question, k=2)
+        api_configs = self.retriever.get_top_apis_config(question, top_k=top_k)
         
         prompt = f"""<|im_start|>system
 Bạn là hệ thống trích xuất thông tin API tự động. 

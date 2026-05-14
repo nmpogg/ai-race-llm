@@ -16,10 +16,10 @@ class APIRetriever:
     def _tokenize(self, text):
         return re.findall(r'\b\w+\b', str(text).lower())
 
-    def get_top_apis_config(self, question, k=2):
+    def get_top_apis_config(self, question, top_k=5):
         tokenized_query = self._tokenize(question)
         self.df_api['score'] = self.bm25.get_scores(tokenized_query)
-        top_k_df = self.df_api.sort_values(by='score', ascending=False).head(k)
+        top_k_df = self.df_api.sort_values(by='score', ascending=False).head(top_k)
         
         configs = []
         for _, row in top_k_df.iterrows():

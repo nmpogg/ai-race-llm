@@ -4,70 +4,110 @@ import pickle
 import faiss
 import numpy as np
 import re
+import sqlite3
 from sentence_transformers import SentenceTransformer, CrossEncoder
 
 class DocAgent:
-    def __init__(self, llm_service, index_dir="./index_data"):
+    def __init__(self, llm_service, index_dir="./data/knowledge"):
         self.llm = llm_service
+        self.index_dir = index_dir
         
         print("Đang load hệ thống Hybrid Retrieval...")
+        
         # load chunks
         with open(os.path.join(index_dir, "chunks.pkl"), "rb") as f:
             self.chunks = pickle.load(f)
             
-        # load BM25 index
-        with open(os.path.join(index_dir, "bm25.pkl"), "rb") as f:
-            self.bm25 = pickle.load(f)
+        # SQLite Database
+        self.db_path = os.path.join(index_dir, "bm25_index.db")
+        if not os.path.exists(self.db_path):
+            print(f"Cảnh báo: Không tìm thấy file {self.db_path}. Hãy build index trước!")
             
-        # load faiss, embedding model
+        # load faiss & embedding model
         self.faiss_index = faiss.read_index(os.path.join(index_dir, "faiss.index"))
         self.embed_model = SentenceTransformer("keepitreal/vietnamese-sbert")
         
         # load cross-encoder reranker
         self.reranker = CrossEncoder("cross-encoder/mmarco-mMiniLMv2-L12-H384-v1")
-        print("Đã load thành công.")
+        print("Đã load thành công DocAgent.")
 
-    def _tokenize(self, text):
-        return re.findall(r'\b\w+\b', str(text).lower())
+    def retrieve_bm25_sqlite(self, question, top_k=10):
+        clean_query = re.sub(r'[^\w\s]', ' ', question).strip()
+        if not clean_query:
+            return []
+            
+        try:
+            # Mở kết nối tạm thời và truy vấn siêu tốc
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT chunk_id 
+                FROM bm25_chunks 
+                WHERE bm25_chunks MATCH ? 
+                ORDER BY rank 
+                LIMIT ?
+            ''', (clean_query, top_k))
+            
+            result_ids = [row[0] for row in cursor.fetchall()]
+            conn.close()
+            return result_ids
+            
+        except sqlite3.OperationalError as e:
+            # Bắt lỗi an toàn nếu có từ khóa quá lạ
+            print(f"Lỗi truy vấn BM25: {e}")
+            return []
 
-    def retrieve_and_rerank(self, question, top_k_retrieve=5, top_k_rerank=2):
-        """Hàm truy xuất kết hợp và xếp hạng lại"""
-        # faiss
+    def retrieve_and_rerank(self, question, top_k_retrieve=10, top_k_rerank=7):
+        """Hàm truy xuất kết hợp và xếp hạng lại (Hybrid Search)"""
+        
+        # truy xuất bằng FAISS
         q_emb = self.embed_model.encode([question], convert_to_numpy=True)
         faiss.normalize_L2(q_emb)
         _, faiss_indices = self.faiss_index.search(q_emb, top_k_retrieve)
-        faiss_results = [self.chunks[i] for i in faiss_indices[0]]
+        # chỉ lấy các ID hợp lệ (khác -1)
+        faiss_ids = [int(i) for i in faiss_indices[0] if i != -1]
 
-        # bm25
-        tokenized_q = self._tokenize(question)
-        bm25_scores = self.bm25.get_scores(tokenized_q)
-        bm25_indices = np.argsort(bm25_scores)[::-1][:top_k_retrieve]
-        bm25_results = [self.chunks[i] for i in bm25_indices if bm25_scores[i] > 0]
+        # tuy xuất bằng BM25
+        bm25_ids = self.retrieve_bm25_sqlite(question, top_k_retrieve)
 
-        # merge
-        combined_chunks = list(set(faiss_results + bm25_results))
+        # merged
+        combined_ids = list(set(faiss_ids + bm25_ids))
         
-        if not combined_chunks:
+        if not combined_ids:
+            return ""
+
+        candidate_contexts = []
+        for cid in combined_ids:
+            if 0 <= cid < len(self.chunks):
+                chunk_obj = self.chunks[cid]
+                source = chunk_obj.get("metadata", {}).get("source", "Unknown")
+                text = chunk_obj.get("text", "")
+                
+                candidate_contexts.append(f"[Trích từ: {source}]\n{text}")
+
+        if not candidate_contexts:
             return ""
 
         # rerank
-        cross_inp = [[question, chunk] for chunk in combined_chunks]
+        cross_inp = [[question, ctx] for ctx in candidate_contexts]
         cross_scores = self.reranker.predict(cross_inp)
         
-        scored_chunks = list(zip(cross_scores, combined_chunks))
+        scored_chunks = list(zip(cross_scores, candidate_contexts))
         scored_chunks.sort(key=lambda x: x[0], reverse=True)
         
+        # top_k_rerank kết quả tốt nhất
         best_chunks = [chunk for score, chunk in scored_chunks[:top_k_rerank]]
         
         return "\n\n---\n\n".join(best_chunks)
 
-    def process(self, question, note=""):
-        # retrieve & rerank
-        context = self.retrieve_and_rerank(question, top_k_retrieve=5, top_k_rerank=2)
+    def process(self, question, note="", top_k_retrieve=10, top_k_rerank=7):
+        # Retrieve & rerank
+        context = self.retrieve_and_rerank(question, top_k_retrieve=top_k_retrieve, top_k_rerank=top_k_rerank)
         
         note_text = f"Gợi ý từ hệ thống: {note}\n\n" if str(note).strip() else ""
 
-        # prompt
+        # Prompt
         prompt = f"""<|im_start|>system
 Bạn là hệ thống trích xuất thông tin tự động dựa trên tài liệu.
 Nhiệm vụ của bạn là đọc [TÀI LIỆU CUNG CẤP] và trả lời câu hỏi dưới ĐỊNH DẠNG JSON.
@@ -87,10 +127,10 @@ Câu hỏi: {question}
 <|im_end|>
 <|im_start|>assistant
 """
-        # call LLM
+        # Call LLM
         raw_output = self.llm.generate(prompt)
         
-        # parse output
+        # Parse output
         try:
             json_match = re.search(r'\{.*?\}', raw_output, re.DOTALL)
             if json_match:
@@ -116,7 +156,7 @@ Câu hỏi: {question}
                 
                 final_result = ",".join(final_list)
                 
-                # Optional: đồng bộ numbers với số lượng đáp án
+                # Đồng bộ numbers với số lượng đáp án thực tế tìm được
                 numbers = len(final_list)
                 
                 return json.dumps({
@@ -127,7 +167,7 @@ Câu hỏi: {question}
         except Exception:
             pass
             
-        # fallback
+        # Fallback cứng khi lỗi nặng
         return json.dumps({
             "numbers": 1,
             "result": "A"

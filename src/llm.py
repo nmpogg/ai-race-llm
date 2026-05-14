@@ -15,8 +15,8 @@ class LLMService:
     def generate(self, prompt):
         outputs = self.pipe(
             prompt,
-            max_new_tokens=300,
-            temperature=0.0,
+            max_new_tokens=512,
+            temperature=0.1,
             do_sample=False, 
             return_full_text=False
         )
