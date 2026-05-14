@@ -1,4 +1,5 @@
 import os
+import gc
 import time
 import csv
 import pandas as pd
@@ -37,6 +38,7 @@ router = None
 retriever = None
 api_agent = None
 doc_agent = None
+chunker = None
 
 def load_service():
     global llm_service, router, retriever, api_agent, doc_agent
@@ -45,6 +47,8 @@ def load_service():
     
     if RUN_PDF_TO_MD:
         process_pdf_data(DIR_PDF_INPUT, DIR_MD_OUTPUT, FILE_MASTER_MD)
+
+    chunks = None
 
     if RUN_CHUNKING:
         chunker = MarkdownChunker(max_chunk_size=3000)
@@ -62,7 +66,14 @@ def load_service():
         print(f"Đã lưu toàn bộ dữ liệu ra file: {DIR_CHUNK_DATA_PKL} và {DIR_CHUNK_DATA_JSON}")
 
     if RUN_BUILD_INDEX:
+        if chunks is None:
+            print("Đang nạp chunks từ file pickle để build index...")
+            with open(DIR_CHUNK_DATA_PKL, "rb") as f:
+                chunks = pickle.load(f)
         build_index(chunks, DIR_INDEX_DATA)
+
+    del chunks
+    gc.collect()
     
     # load service
     print("Loading LLM Service, Router, API Retriever, API Agent, Document Agent...")
