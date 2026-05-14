@@ -225,7 +225,7 @@ def infer():
     
 if __name__ == "__main__":
     load_service() 
-    print("Chọn options:" \
+    print("Chọn options:\n" \
     "0 - eval + infer\n" \
     "1 - Chỉ eval\n" \
     "2 - Chỉ infer")
