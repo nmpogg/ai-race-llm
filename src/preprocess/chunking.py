@@ -2,7 +2,7 @@ import re
 import os
 import json
 
-class SmartDocumentChunker:
+class MarkdownChunker:
     def __init__(self, max_chunk_size=1200):
         self.max_chunk_size = max_chunk_size
 
@@ -98,7 +98,7 @@ if __name__ == "__main__":
     
     print(f"Bắt đầu đọc và chunk file: {md_file_path}")
     
-    chunker = SmartDocumentChunker(max_chunk_size=3000)
+    chunker = MarkdownChunker(max_chunk_size=3000)
     
     chunks = list(chunker.stream_and_chunk(md_file_path))
     print(f"Đã tạo thành công {len(chunks)} chunks!")
