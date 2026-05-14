@@ -28,9 +28,10 @@ RUN_BUILD_INDEX = not (
     os.path.exists(os.path.join(DIR_INDEX_DATA, "faiss.index"))
 )
 
-FILE_TRAIN_DATA   = "Train_data.xlsx - question_train.csv"
-FILE_TEST_DATA    = "Test_data.xlsx - question_test.csv"
-FILE_API_CONFIG   = "Tài liệu config API.xlsx - Doc_api_for_contest.csv"
+FILE_TRAIN_DATA   = "./data/example_data/example_data.xlsx"
+FILE_TEST_DATA    = "./data/test_data/Test_data.xlsx"
+FILE_API_CONFIG   = "./data/API_config_data/Tài liệu config API.xlsx"
+FILE_EVAL_OUTPUT = "eval_results.csv"
 FILE_SUBMISSION   = "submission.csv"
 
 llm_service = None
@@ -87,9 +88,85 @@ def load_service():
 
 def eval():
     global router, api_agent, doc_agent
-    print("Bắt đầu Evaluation trên tập dữ liệu Train...")
-    # Logic eval 
-    return
+    print("Bắt đầu evaluation trên tập dữ liệu Train...")
+    
+    if FILE_TRAIN_DATA.endswith('.xlsx'):
+        df_train = pd.read_excel(FILE_TRAIN_DATA, sheet_name="example_question")
+        df_train_rs = pd.read_excel(FILE_TRAIN_DATA, sheet_name="example_result")
+    else:
+        print("Lỗi: File Train phải là định dạng Excel (.xlsx) chứa 2 sheets.")
+        return
+
+    if 'note' not in df_train.columns: 
+        df_train['note'] = ""
+
+    df_merged = pd.merge(df_train, df_train_rs, on='id', how='inner')
+    
+    results = []
+    correct_count = 0
+    total_questions = len(df_merged)
+    
+    print(f"Bắt đầu xử lý và đánh giá {total_questions} câu hỏi...\n")
+    
+    for index, row in df_merged.iterrows():
+        start_time = time.time()
+        
+        question = row['fun_question']
+        note = row['note']
+        q_id = row['id']
+        truth_param = str(row['func_param']).strip()
+        
+        func_code = router.classify(question)
+        
+        if func_code == "call_api":
+            pred_param = api_agent.process(question)
+        else:
+            pred_param = doc_agent.process(question, note)
+            
+        time_response = int((time.time() - start_time) * 1000)
+
+        is_correct = False
+        try:
+            pred_dict = json.loads(str(pred_param))
+            truth_dict = json.loads(truth_param)
+            is_correct = (pred_dict == truth_dict)
+        except Exception:
+            is_correct = (str(pred_param).strip() == truth_param)
+
+        if is_correct:
+            correct_count += 1
+
+        results.append({
+            "id": q_id,
+            "question": question,
+            "func_code": func_code,
+            "predicted_param": pred_param,
+            "truth_param": truth_param,
+            "is_correct": is_correct,
+            "time_response": time_response
+        })
+        
+        if (index + 1) % 10 == 0: 
+            current_acc = (correct_count / (index + 1)) * 100
+            print(f"Đã xử lý {index + 1}/{total_questions} câu... Acc tạm thời: {current_acc:.2f}%")
+
+    final_accuracy = (correct_count / total_questions) * 100 if total_questions > 0 else 0
+    
+    print("BÁO CÁO KẾT QUẢ ĐÁNH GIÁ (EVALUATION)")
+
+    print(f"Tổng số câu hỏi : {total_questions}")
+    print(f"Số câu trả lời đúng : {correct_count}")
+    print(f"Độ chính xác (Accuracy) : {final_accuracy:.2f}%")
+
+    pd.DataFrame(results).to_csv(
+        FILE_EVAL_OUTPUT, 
+        index=False, 
+        encoding='utf-8-sig', 
+        quoting=csv.QUOTE_ALL
+    )
+    print(f"Chi tiết đúng/sai từng câu đã được lưu tại: {FILE_EVAL_OUTPUT}")
+    
+    return final_accuracy
 
 def infer():
     global router, api_agent, doc_agent 
@@ -144,5 +221,5 @@ def infer():
 if __name__ == "__main__":
     load_service() 
     
-    # eval()
+    eval()
     # infer()
