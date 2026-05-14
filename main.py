@@ -225,6 +225,16 @@ def infer():
     
 if __name__ == "__main__":
     load_service() 
-    
-    eval()
-    # infer()
+    print("Chọn options:" \
+    "0 - eval + infer\n" \
+    "1 - Chỉ eval\n" \
+    "2 - Chỉ infer")
+    n = input("Nhập lựa chọn của bạn: ").strip()
+    if n == "0":
+        eval()
+        infer()
+    elif n == "1": 
+        eval()
+    elif n == "2":
+        infer()
+    else:        print("Lựa chọn không hợp lệ. Vui lòng chạy lại và chọn 0, 1 hoặc 2.")
