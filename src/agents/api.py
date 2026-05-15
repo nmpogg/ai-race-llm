@@ -10,7 +10,7 @@ class APIAgent:
         self.retriever = retriever
         self.fewshot   = fewshot_loader
 
-    # DATE EXTRACTION 
+    # DATE EXTRACTION
 
     def _extract_dates(self, question: str) -> tuple[str, str]:
         q = question.lower()
@@ -58,7 +58,7 @@ class APIAgent:
         mo = max(1, min(12, mo))
         return f"{yr}-{mo:02d}-{calendar.monthrange(yr, mo)[1]}"
 
-    # EXTRACT HELPERS 
+    # EXTRACT HELPERS
 
     def _extract_type(self, question: str) -> int:
         q = question.lower()
@@ -98,25 +98,35 @@ class APIAgent:
     # ENUM MAPS
 
     ORG_ALIASES = {
-        "ttpmqt":  "TTPMQT",  "ttpmtcs": "TTPMTCS", "ttpmvt":  "TTPMVT",
-        "ttpmcnm": "TTPMCNM", "ttpmcds": "TTPMCDS", "ttcndt":  "TTCNDT",
-        "ttcnđt":  "TTCNDT",  "tt cnđt": "TTCNDT",
-        "pm qt":   "TTPMQT",  "pm tcs":  "TTPMTCS", "pm vt":   "TTPMVT",
-        "pm cnm":  "TTPMCNM", "pm cds":  "TTPMCDS",
+        "ttpmqt":   "TTPMQT",  "ttpmtcs":  "TTPMTCS", "ttpmvt":   "TTPMVT",
+        "ttpmcnm":  "TTPMCNM", "ttpmcds":  "TTPMCDS", "ttcndt":   "TTCNDT",
+        "ttcnđt":   "TTCNDT",  "tt cnđt":  "TTCNDT",
+        "pm qt":    "TTPMQT",  "pm tcs":   "TTPMTCS", "pm vt":    "TTPMVT",
+        "pm cnm":   "TTPMCNM", "pm cds":   "TTPMCDS",
+        # Thêm mới
+        "ttpmcđs":  "TTPMCDS", "tt pmcds": "TTPMCDS",
+        "tt pmvt":  "TTPMVT",  "tt pmqt":  "TTPMQT",
+        "tt pmtcs": "TTPMTCS", "tt pmcnm": "TTPMCNM",
+        "trung tâm pm qt":  "TTPMQT",
+        "trung tâm pm tcs": "TTPMTCS",
+        "trung tâm pm vt":  "TTPMVT",
+        "trung tâm pm cnm": "TTPMCNM",
+        "trung tâm pm cds": "TTPMCDS",
+        "trung tâm cnđt":   "TTCNDT",
     }
 
     ORG_CODE_MAP = {
-        "ttpmqt":  "TTPMQT",  "ttpmtcs": "TTPMTCS", "ttpmvt":  "TTPMVT",
-        "ttpmcnm": "TTPMCNM", "ttpmcds": "TTPMCDS", "ttcndt":  "TTCNDT",
-        "ttcnđt":  "TTCNDT",  "vtit":    "VTIT",
+        "ttpmqt":   "TTPMQT",  "ttpmtcs":  "TTPMTCS", "ttpmvt":   "TTPMVT",
+        "ttpmcnm":  "TTPMCNM", "ttpmcds":  "TTPMCDS", "ttcndt":   "TTCNDT",
+        "ttcnđt":   "TTCNDT",  "ttpmcđs":  "TTPMCDS", "vtit":     "VTIT",
     }
 
     PROJECT_TYPE_MAP = {
-        "package":          "Package",   "gói":              "Package",
-        "osdc":             "osdc",      "odc/osdc":         "odc/osdc",
-        "odc":              "odc",       "t&m":              "T&M",
-        "time and material": "T&M",      "presale":          "presales",
-        "presales":         "presales",
+        "package":           "Package",  "gói":               "Package",
+        "osdc":              "osdc",     "odc/osdc":          "odc/osdc",
+        "odc":               "odc",      "t&m":               "T&M",
+        "time and material": "T&M",      "presale":           "presales",
+        "presales":          "presales",
     }
 
     PROJECT_STATUS_MAP = {
@@ -128,11 +138,11 @@ class APIAgent:
     }
 
     ASSET_GROUP_MAP = {
-        "dịch vụ cntt":    "Dịch vụ CNTT",
-        "công cụ dụng cụ": "Công cụ dụng cụ",
+        "dịch vụ cntt":     "Dịch vụ CNTT",
+        "công cụ dụng cụ":  "Công cụ dụng cụ",
         "máy móc thiết bị": "Máy móc thiết bị",
-        "phần mềm":        "Phần mềm",
-        "tài sản cố định": "Tài sản cố định",
+        "phần mềm":         "Phần mềm",
+        "tài sản cố định":  "Tài sản cố định",
     }
 
     LCNT_OPTION_MAP = {
@@ -153,19 +163,16 @@ class APIAgent:
         "tự thực hiện":            "Tự thực hiện",
     }
 
-    # TARGET CODE MAP: dành cho 10 GET APIs KD/TC 
-    # targetCode xuất hiện trong URL path của GET APIs
-    # Giá trị mặc định lấy từ path template trong endpoint config
     TARGET_CODE_MAP = {
-        "doanh thu":                 "DT",
-        "doanh thu dịch vụ":         "DT",
-        "doanh thu thuần":           "DT",
-        "slnt":                      "SLNT",
-        "sản lượng nghiệm thu":      "SLNT",
-        "giá trị hợp đồng":          "GTHĐKM",
-        "hợp đồng ký mới":           "GTHĐKM",
-        "lợi nhuận gộp":             "LNG",
-        "lợi nhuận":                 "LNG",
+        "doanh thu":            "DT",
+        "doanh thu dịch vụ":    "DT",
+        "doanh thu thuần":      "DT",
+        "slnt":                 "SLNT",
+        "sản lượng nghiệm thu": "SLNT",
+        "giá trị hợp đồng":     "GTHĐKM",
+        "hợp đồng ký mới":      "GTHĐKM",
+        "lợi nhuận gộp":        "LNG",
+        "lợi nhuận":            "LNG",
     }
 
     def _extract_orgs(self, question: str) -> list[str]:
@@ -189,14 +196,13 @@ class APIAgent:
         return found
 
     def _extract_target_code(self, question: str, default: str = "DT") -> str:
-        """Extract targetCode từ câu hỏi, fallback về default từ path template."""
         q = question.lower()
         for kw, code in self.TARGET_CODE_MAP.items():
             if kw in q:
                 return code
         return default
 
-    # LLM: CHỌN API + EXTRACT PARAMS 
+    # LLM: CHỌN API + EXTRACT PARAMS
 
     _SELECT_AND_BODY_PROMPT = (
         "{fewshot}"
@@ -219,8 +225,8 @@ class APIAgent:
     def _select_and_extract_params(self, question: str, top_df) -> tuple[str | None, dict]:
         api_list_str = "\n---\n".join(
             f"func_code: {row['func_code']}\n"
-            f"Mô tả: {row.get('description', '')[:200]}\n"
-            f"Ví dụ: {str(row.get('Example question', ''))[:150]}"
+            f"Mô tả: {row.get('description', '')[:150]}\n"   # giảm 200→150
+            f"Ví dụ: {str(row.get('Example question', ''))[:100]}"  # giảm 150→100
             for _, row in top_df.iterrows()
         )
 
@@ -233,15 +239,17 @@ class APIAgent:
             api_list=api_list_str,
             question=question,
         )
-        raw = self.llm.generate(prompt, max_tokens=250).strip()
+        raw = self.llm.generate(prompt, max_tokens=200).strip()  # giảm 250→200
 
         selected_fc = None
         llm_params  = {}
         try:
-            m = re.search(r"\{.*\}", raw, re.DOTALL)
-            if m:
-                obj    = json.loads(m.group(0))
-                fc_raw = obj.get("func_code", "")
+            # FIX: raw_decode chỉ đọc JSON object đầu tiên hợp lệ, bỏ qua text thừa → tránh "Extra data"
+            decoder = json.JSONDecoder()
+            start   = raw.find('{')
+            if start != -1:
+                obj, _  = decoder.raw_decode(raw, start)
+                fc_raw  = obj.get("func_code", "")
                 for fc in top_df["func_code"].tolist():
                     if fc.lower() in fc_raw.lower():
                         selected_fc = fc
@@ -252,7 +260,7 @@ class APIAgent:
                         if re.sub(r"\s+", "", fc).lower() in fc_clean:
                             selected_fc = fc
                             break
-                llm_params = obj.get("body_params", {})
+                llm_params = obj.get("body_params", {}) or {}
         except Exception as e:
             print(f"⚠️ LLM select+extract lỗi: {e}")
             for fc in top_df["func_code"].tolist():
@@ -262,7 +270,7 @@ class APIAgent:
 
         return selected_fc, llm_params
 
-    # BODY BUILDER 
+    # BODY BUILDER
 
     def _build_body(
         self,
@@ -294,7 +302,6 @@ class APIAgent:
         for p in all_params:
             name  = p.get("name", "")
             ptype = p.get("type", "")
-            desc  = p.get("description", "")
 
             if name in ("fromDate", "from_date", "startDate"):
                 body[name] = from_date
@@ -339,7 +346,6 @@ class APIAgent:
             elif name == "size":
                 body[name] = 20
             elif name == "isProbation":
-                # isProbation: thực tập sinh = 1, chính thức = 0, mặc định None (lấy hết)
                 q = question.lower()
                 if re.search(r"thực tập|tts\b|probation", q):
                     body[name] = 1
@@ -351,13 +357,11 @@ class APIAgent:
                 q = question.lower()
                 body[name] = bool(re.search(r"thực tập|tts\b|probation", q))
             elif name == "targetCode":
-                # Lấy default từ path template nếu có
                 path = cfg.get("request", {}).get("path", "")
                 tc_match = re.search(r"targetCode=([A-Z]+)", path)
                 default_tc = tc_match.group(1) if tc_match else "DT"
                 body[name] = self._extract_target_code(question, default=default_tc)
             elif name == "cycleType":
-                # cycleType: month/quarter/year
                 q = question.lower()
                 if re.search(r"quý|quarter", q):
                     body[name] = "quarter"
@@ -378,7 +382,7 @@ class APIAgent:
 
         return body
 
-    # BUILD PATH: Handle GET APIs với query params trong URL 
+    # BUILD PATH: Handle GET APIs với query params trong URL
 
     def _build_path_with_params(
         self,
@@ -386,42 +390,31 @@ class APIAgent:
         body: dict,
         question: str,
     ) -> str:
-        """
-        FIX QUAN TRỌNG: 10 GET APIs dùng query params trong URL path.
-        _build_body chỉ build POST body, không update path.
-        GET APIs có pattern: /path?param1=value1&param2=value2
-        -> Cần inject summary_date, org_code, target_code vào path.
-        """
         method = cfg.get("request", {}).get("method", "POST")
         path   = cfg.get("request", {}).get("path", "")
 
         if method != "GET":
             return path
 
-        # Với GET: update các query params trong path
-        # summaryDate: dùng to_date (ngày cuối kỳ)
         summary_date = body.get("summaryDate", "")
         if summary_date and re.search(r"summaryDate=[\d\-]+", path):
             path = re.sub(r"summaryDate=[\d\-]+", f"summaryDate={summary_date}", path)
 
-        # organizationCode
         org_code = body.get("organizationCode", "VTIT")
         if org_code and re.search(r"organizationCode=\w+", path):
             path = re.sub(r"organizationCode=\w+", f"organizationCode={org_code}", path)
 
-        # targetCode
         target_code = body.get("targetCode", "DT")
         if target_code and re.search(r"targetCode=\w+", path):
             path = re.sub(r"targetCode=\w+", f"targetCode={target_code}", path)
 
-        # cycleType
         cycle_type = body.get("cycleType", "month")
         if cycle_type and re.search(r"cycleType=\w+", path):
             path = re.sub(r"cycleType=\w+", f"cycleType={cycle_type}", path)
 
         return path
 
-    # MAIN PROCESS 
+    # MAIN PROCESS
 
     def process(self, question: str) -> str:
         top_df = self.retriever.get_top_apis_df(question, k=5)
@@ -441,11 +434,8 @@ class APIAgent:
             return "{}"
 
         body = self._build_body(question, selected_row["Endpoint config"], llm_params=llm_params)
-
-        # Với GET APIs, inject params vào URL path thay vì body
         path = self._build_path_with_params(cfg, body, question)
 
-        # GET APIs không cần body (params đã trong URL)
         method = cfg.get("request", {}).get("method", "POST")
         if method == "GET":
             return json.dumps({"path": path, "body": {}}, ensure_ascii=False)

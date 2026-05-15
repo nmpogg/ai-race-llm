@@ -35,18 +35,10 @@ class DocAgent:
         return re.findall(r"\w+", str(text).lower())
 
     def _build_search_query(self, question: str, note: str) -> str:
-        """
-        Tạo search query từ question + note MÀ KHÔNG gọi LLM.
-        - Note chứa A/B/C/D options là signal ngữ nghĩa cho retrieval
-        - Kết hợp question + note text (bỏ ký tự A, B, C, D prefix)
-        """
         if not note:
             return question
-
-        # Trích xuất text từ các options trong note (bỏ prefix A, B, C, D)
-        option_texts = re.findall(r'\b[ABCD][,.\)]\s*(.+?)(?=\n\s*[ABCD][,.\)]|\Z)', note, re.DOTALL)
+        option_texts = re.findall(r'\b[ABCD][,.]\s*(.+?)(?=\n\s*[ABCD][,.]|\Z)', note, re.DOTALL)
         option_content = " ".join(t.strip() for t in option_texts if t.strip())
-
         if option_content:
             return f"{question} {option_content}"
         return f"{question} {note}"
@@ -56,11 +48,9 @@ class DocAgent:
         question: str,
         note: str = "",
         top_k_retrieve: int = 15,
-        top_k_rerank: int = 5,   # Tăng từ 4 → 5 để context phong phú hơn
+        top_k_rerank: int = 5,
     ) -> str:
-        note_str = str(note).strip()
-
-        # Query chính: question + option texts (không cần LLM expansion)
+        note_str   = str(note).strip()
         main_query = self._build_search_query(question, note_str)
 
         # FAISS semantic search
@@ -70,11 +60,11 @@ class DocAgent:
         faiss_results = [self.chunks[i] for i in faiss_idx[0] if i < len(self.chunks)]
 
         # BM25 keyword search
-        bm25_scores = self.bm25.get_scores(self._tok(main_query))
-        bm25_idx    = np.argsort(bm25_scores)[::-1][:top_k_retrieve]
+        bm25_scores  = self.bm25.get_scores(self._tok(main_query))
+        bm25_idx     = np.argsort(bm25_scores)[::-1][:top_k_retrieve]
         bm25_results = [self.chunks[i] for i in bm25_idx if bm25_scores[i] > 0]
 
-        # Nếu question và note khác nhau nhiều: search thêm bằng question thuần
+        # Search thêm bằng question thuần nếu có note
         note_results = []
         if note_str and len(note_str) > 20:
             n_emb = self.embed_model.encode([question], convert_to_numpy=True)
@@ -82,7 +72,7 @@ class DocAgent:
             _, n_idx = self.faiss_index.search(n_emb, 5)
             note_results = [self.chunks[i] for i in n_idx[0] if i < len(self.chunks)]
 
-        seen: set  = set()
+        seen: set     = set()
         combined: list = []
         for chunk in note_results + faiss_results + bm25_results:
             key = chunk[:80]
@@ -93,8 +83,7 @@ class DocAgent:
         if not combined:
             return ""
 
-        combined = combined[:25]
-        # Rerank dùng question gốc (không dùng expanded query) để reranker chính xác hơn
+        combined  = combined[:25]
         scores    = self.reranker.predict([[question, c] for c in combined])
         top_chunks = [
             c for _, c in sorted(zip(scores, combined), reverse=True)[:top_k_rerank]
@@ -103,7 +92,7 @@ class DocAgent:
 
     @staticmethod
     def _extract_letters(text: str) -> list:
-        seen: set   = set()
+        seen: set    = set()
         result: list = []
         for m in re.findall(r"[ABCD]", text.upper()):
             if m not in seen:
@@ -141,9 +130,6 @@ class DocAgent:
                     return len(letters), ",".join(letters)
 
         return None, None
-
-    # PROMPTS 
-    # thêm instruction về việc ưu tiên thông tin trong tài liệu
 
     _COT_PROMPT = """{fewshot}Bạn là chuyên gia trả lời câu hỏi trắc nghiệm dựa trên tài liệu.
 
@@ -217,7 +203,7 @@ Chỉ trả về đúng 1 ký tự là đáp án đúng nhất (A, B, C hoặc D
                 letters = self._extract_letters(best)
                 return json.dumps({"numbers": len(letters), "result": best}, ensure_ascii=False)
 
-        # FAST PATH: COT → Direct → Force 
+        # FAST PATH: COT → Direct → Force
         prompt = self._COT_PROMPT.format(
             fewshot=fewshot_block, context=ctx_short, question=full_question
         )
@@ -242,4 +228,4 @@ Chỉ trả về đúng 1 ký tự là đáp án đúng nhất (A, B, C hoặc D
         if letters:
             return json.dumps({"numbers": 1, "result": letters[0]}, ensure_ascii=False)
 
-        return json.dumps({"numbers": 1, "result": "A"}, ensure_ascii=False)
+        return json.dumps({"numbers": 1, "result": ""}, ensure_ascii=False)

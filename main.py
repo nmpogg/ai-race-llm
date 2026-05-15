@@ -1,7 +1,6 @@
 import json
 import os
 import re
-import shutil
 import time
 import pandas as pd
 from sentence_transformers import SentenceTransformer
@@ -15,13 +14,12 @@ from src.retrieval.apiretriever import APIRetriever
 
 # CONFIG
 INPUT_FILE      = "./data/test_data/Test_data.xlsx"
-OUTPUT_FILE     = "/kaggle/working/result.csv"
-CHECKPOINT_FILE = "/kaggle/working/checkpoint.csv"
+OUTPUT_FILE     = "./data/output/result.csv"
+CHECKPOINT_FILE = "./data/output/checkpoint.csv"
 INDEX_DIR       = "./data/knowledge"
-API_CSV         = "/kaggle/working/api_config.csv"
+API_CSV         = "./data/API_config_data/api_config.csv"
 EXAMPLE_DIR     = "./data/example_data"
 USE_ENSEMBLE    = False
-DATA_DRIVE      = "/content/drive/MyDrive/ai-race-data"
 
 
 def _read_input(path: str) -> pd.DataFrame:
@@ -51,11 +49,11 @@ def load_services():
     fewshot = FewShotLoader(example_dir=EXAMPLE_DIR, embed_model=embed_model, top_k=2)
 
     print("4/5 Router + DocAgent + APIAgent...")
-    router    = RouterAgent(llm_service=llm)
-    doc_agent = DocAgent(llm_service=llm, index_dir=INDEX_DIR,
-                         fewshot_loader=fewshot, use_ensemble=USE_ENSEMBLE)
+    router        = RouterAgent(llm_service=llm)
+    doc_agent     = DocAgent(llm_service=llm, index_dir=INDEX_DIR,
+                             fewshot_loader=fewshot, use_ensemble=USE_ENSEMBLE)
     api_retriever = APIRetriever(api_csv_path=API_CSV, embed_model=embed_model)
-    api_agent = APIAgent(llm_service=llm, retriever=api_retriever, fewshot_loader=fewshot)
+    api_agent     = APIAgent(llm_service=llm, retriever=api_retriever, fewshot_loader=fewshot)
 
     print("5/5 Sẵn sàng.")
     print("=" * 60)
@@ -71,15 +69,6 @@ def _parse_note(note_raw) -> str:
     return "" if s.lower() == "nan" else s
 
 
-# KEY FIX: Note có A/B/C/D options → LUÔN là call_document 
-# -> Nếu note không rỗng và có options A/B/C/D = call_document
-# -> Bỏ qua router hoàn toàn: tiết kiệm LLM call + tránh route sai
-_NOTE_OPTION_RE = re.compile(r'\b[ABCD][,.\)]\s')
-
-def _note_has_options(note: str) -> bool:
-    return bool(_NOTE_OPTION_RE.search(note))
-
-
 def process_row(row, router, doc_agent, api_agent) -> dict:
     qid      = str(row.get("id", ""))
     question = str(row.get("fun_question", row.get("question", ""))).strip()
@@ -87,15 +76,14 @@ def process_row(row, router, doc_agent, api_agent) -> dict:
 
     t0 = time.time()
 
-    if note_str and _note_has_options(note_str):
-        func_code  = "call_document"
+    # Phân loại CHỈ dựa vào question, không dùng note
+    func_code = router.classify(question)
+
+    # Chỉ sau khi có func_code mới được dùng note (nếu là call_document)
+    if func_code == "call_document":
         raw_result = doc_agent.process(question, note=note_str)
     else:
-        func_code = router.classify(question)
-        if func_code == "call_document":
-            raw_result = doc_agent.process(question, note=note_str)
-        else:
-            raw_result = api_agent.process(question)
+        raw_result = api_agent.process(question)
 
     elapsed = round(time.time() - t0, 3)
 
@@ -106,10 +94,10 @@ def process_row(row, router, doc_agent, api_agent) -> dict:
         function_result = str(raw_result)
 
     return {
-    "id":         qid,
-    "func_code":  func_code,
-    "func_param": function_result,
-    "time":       elapsed,
+        "id":         qid,
+        "func_code":  func_code,
+        "func_param": function_result,
+        "time":       elapsed,
     }
 
 
@@ -128,13 +116,6 @@ def load_checkpoint() -> set:
 def save_checkpoint(results: list):
     os.makedirs(os.path.dirname(CHECKPOINT_FILE), exist_ok=True)
     pd.DataFrame(results).to_csv(CHECKPOINT_FILE, index=False, encoding="utf-8-sig")
-    drive_ck = f"{DATA_DRIVE}/output/checkpoint.csv"
-    try:
-        if os.path.exists(DATA_DRIVE):
-            os.makedirs(os.path.dirname(drive_ck), exist_ok=True)
-            shutil.copy(CHECKPOINT_FILE, drive_ck)
-    except Exception:
-        pass
     print(f"💾 Checkpoint: {len(results)} câu.")
 
 
@@ -160,11 +141,11 @@ def main(router=None, doc_agent=None, api_agent=None):
             results.append(result)
             print(f"[{i}/{len(remaining)}] id={result['id']} → {result['func_code']} ({result['time']}s)")
         except Exception as e:
-            print(f"⚠️ Lỗi id={row.get('id','?')}: {e}")
+            print(f"⚠️ Lỗi id={row.get('id', '?')}: {e}")
             results.append({
                 "id":         str(row.get("id", "")),
-                "func_code":  "call_document",
-                "func_param": '{"numbers": 1, "result": "A"}',
+                "func_code":  "",
+                "func_param": "",
                 "time":       0.0,
             })
         if i % 30 == 0:

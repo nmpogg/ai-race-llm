@@ -6,13 +6,6 @@ class RouterAgent:
     def __init__(self, llm_service=None):
         self.llm = llm_service
 
-    _MCQ_HARD = [
-        r"(?<!\w)[aAbBcCdD][.)] {0,3}\S",
-        r"\b[ABCD]\s*[.)]\s*\w",
-    ]
-
-    # DOC_OVERRIDE: ưu tiên tuyệt đối, check TRƯỚC api_hard
-    # SLA trong tài liệu (public/td) phân biệt với SLA là KPI API
     _DOC_OVERRIDE = [
         r"giá (bán|mua|tại mỏ|đến chân|chưa vat|chưa thuế)",
         r"giá\s+(thi công|lắp đặt|gia công)",
@@ -21,9 +14,7 @@ class RouterAgent:
         r"\bpublic[_\s]*\d+\b",
         r"public_\d+",
         r"lần lượt là bao nhiêu",
-        # SLA trong tài liệu/quy định: luôn là call_document
-        # Khác với SLA là KPI API (thường đi kèm thực tế/kỳ/tháng cụ thể)
-        r"sla.*(được quy định|yêu cầu|phải đạt|là bao nhiêu|___|\.\.\.|bao nhiêu %)",
+        r"sla.*(được quy định|yêu cầu|phải đạt|là bao nhiêu|___|\.\.\.| bao nhiêu %)",
         r"(uptime|availability).*(được quy định|yêu cầu|phải đạt|là bao nhiêu)",
         r"(sla|uptime).*(trong\s+public|theo\s+public|public\s*\d+|trong\s+td|theo\s+td)",
         r"(khối lượng|diện tích|thể tích).*(hạng mục|công trình|móng|mái|m³|m²)",
@@ -40,7 +31,7 @@ class RouterAgent:
         r"đáp án (nào|đúng|sau|sau đây|dưới đây)",
         r"phương án (nào|đúng|sau|sau đây)",
         r"(câu|ý|phát biểu|nhận định|khẳng định)\s+nào\s+(sau đây|dưới đây|đúng|sai|chính xác)",
-        r"(đúng|sai|chính xác|không đúng|không chính xác)\s*\??\s*$",
+        r"(đúng|sai|chính xác|không đúng|không chính xác)\s*\?\s*$",
         r"(chọn|lựa chọn)\s+(đáp án|phương án|câu trả lời)",
         r"trong (các|những) (đáp án|phương án|lựa chọn)",
         r"(tất cả|bao nhiêu).*(đúng|sai|chính xác)",
@@ -76,7 +67,6 @@ class RouterAgent:
         r"\bslnt\b", r"\bslsx\b", r"\bcpnc\b", r"\blcnt\b",
         r"\bkpi\b", r"\botd\b", r"\bfpy\b", r"\bdpmo\b",
         r"\bocs\b", r"\boee\b", r"\btakt\b",
-        # SLA chỉ là API_HARD khi đi kèm với số liệu thực tế (không có "quy định/yêu cầu")
         r"\bsla\b.*(thực tế|kỳ này|kỳ trước|tháng|quý|năm|đơn vị|ttpm)",
         r"leakage rate", r"defect rate", r"yield rate",
         r"tr\.?\s*đồng", r"trđ\b", r"mm/người",
@@ -131,18 +121,12 @@ class RouterAgent:
         text       = str(question)
         text_lower = text.lower()
 
-        # Tầng 1: MCQ hard — có ít nhất 2 options A/B/C/D trong câu hỏi
-        mcq_hard = sum(1 for p in self._MCQ_HARD if re.search(p, text))
-        if mcq_hard >= 2:
-            return "call_document"
-
-        # Tầng 2: Doc override — check TRƯỚC api_hard để tránh false positive
-        # (SLA, giá bán, TD... đều là call_document dù có time signal)
+        # Tầng 1: Doc override — dấu hiệu rõ ràng là call_document
         doc_override = sum(1 for p in self._DOC_OVERRIDE if re.search(p, text_lower))
         if doc_override >= 1:
             return "call_document"
 
-        # Tầng 3: API hard signal
+        # Tầng 2: API hard signal
         api_score  = sum(1 for p in self._API_HARD if re.search(p, text_lower))
         time_score = sum(1 for p in self._API_TIME if re.search(p, text_lower))
         api_total  = api_score + time_score * 2
@@ -160,7 +144,7 @@ class RouterAgent:
         if mcq_soft >= 1 and api_total == 0:
             return "call_document"
 
-        # Tầng 4: LLM fallback — cho câu ambiguous
+        # Tầng 3: LLM fallback
         if self.llm is not None:
             try:
                 prompt = self._LLM_PROMPT.format(question=text[:600])
