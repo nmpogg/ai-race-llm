@@ -37,7 +37,7 @@ class DocAgent:
     def _build_search_query(self, question: str, note: str) -> str:
         if not note:
             return question
-        option_texts = re.findall(r'\b[ABCD][,.\)]\s*(.+?)(?=\n\s*[ABCD][,.\)]|\Z)', note, re.DOTALL)
+        option_texts = re.findall(r'\b[ABCD][,.]\s*(.+?)(?=\n\s*[ABCD][,.]|\Z)', note, re.DOTALL)
         option_content = " ".join(t.strip() for t in option_texts if t.strip())
         if option_content:
             return f"{question} {option_content}"
@@ -47,29 +47,32 @@ class DocAgent:
         self,
         question: str,
         note: str = "",
-        top_k_retrieve: int = 12,   # giảm 15→12
-        top_k_rerank: int = 4,      # giảm 5→4
+        top_k_retrieve: int = 15,
+        top_k_rerank: int = 5,
     ) -> str:
         note_str   = str(note).strip()
         main_query = self._build_search_query(question, note_str)
 
+        # FAISS semantic search
         q_emb = self.embed_model.encode([main_query], convert_to_numpy=True)
         faiss.normalize_L2(q_emb)
-        _, faiss_idx  = self.faiss_index.search(q_emb, top_k_retrieve)
+        _, faiss_idx = self.faiss_index.search(q_emb, top_k_retrieve)
         faiss_results = [self.chunks[i] for i in faiss_idx[0] if i < len(self.chunks)]
 
+        # BM25 keyword search
         bm25_scores  = self.bm25.get_scores(self._tok(main_query))
         bm25_idx     = np.argsort(bm25_scores)[::-1][:top_k_retrieve]
         bm25_results = [self.chunks[i] for i in bm25_idx if bm25_scores[i] > 0]
 
+        # Search thêm bằng question thuần nếu có note
         note_results = []
         if note_str and len(note_str) > 20:
             n_emb = self.embed_model.encode([question], convert_to_numpy=True)
             faiss.normalize_L2(n_emb)
-            _, n_idx     = self.faiss_index.search(n_emb, 4)  # giảm 5→4
+            _, n_idx = self.faiss_index.search(n_emb, 5)
             note_results = [self.chunks[i] for i in n_idx[0] if i < len(self.chunks)]
 
-        seen: set      = set()
+        seen: set     = set()
         combined: list = []
         for chunk in note_results + faiss_results + bm25_results:
             key = chunk[:80]
@@ -80,8 +83,8 @@ class DocAgent:
         if not combined:
             return ""
 
-        combined = combined[:20]  # giảm 25→20
-        scores   = self.reranker.predict([[question, c] for c in combined])
+        combined  = combined[:25]
+        scores    = self.reranker.predict([[question, c] for c in combined])
         top_chunks = [
             c for _, c in sorted(zip(scores, combined), reverse=True)[:top_k_rerank]
         ]
@@ -98,16 +101,15 @@ class DocAgent:
         return result
 
     def _parse_output(self, raw: str):
-        # FIX: lấy JSON cuối cùng có "result" — LLM thường suy luận trước, kết luận sau
-        all_matches = list(re.finditer(r"\{[^{}]*\}", raw, re.DOTALL))
-        for m in reversed(all_matches):
-            try:
+        try:
+            m = re.search(r"\{[^{}]*\}", raw, re.DOTALL)
+            if m:
                 obj     = json.loads(m.group(0))
                 letters = self._extract_letters(str(obj.get("result", "")))
                 if letters:
                     return len(letters), ",".join(letters)
-            except Exception:
-                continue
+        except Exception:
+            pass
 
         last_lines = [ln.strip() for ln in raw.strip().splitlines() if ln.strip()][-3:]
         for line in reversed(last_lines):
@@ -128,8 +130,6 @@ class DocAgent:
                     return len(letters), ",".join(letters)
 
         return None, None
-
-    # PROMPTS
 
     _COT_PROMPT = """{fewshot}Bạn là chuyên gia trả lời câu hỏi trắc nghiệm dựa trên tài liệu.
 
@@ -179,7 +179,7 @@ Chỉ trả về đúng 1 ký tự là đáp án đúng nhất (A, B, C hoặc D
         if self.fewshot is not None:
             fewshot_block = self.fewshot.get_doc_fewshot(question)
 
-        ctx_short = context[:2800]  # giảm 3000→2800
+        ctx_short = context[:3000]
 
         if self.use_ensemble:
             prompts = [
@@ -187,12 +187,13 @@ Chỉ trả về đúng 1 ký tự là đáp án đúng nhất (A, B, C hoặc D
                 self._DIRECT_PROMPT.format(fewshot=fewshot_block, context=ctx_short, question=full_question),
                 self._COT_PROMPT.format(fewshot="", context=ctx_short, question=full_question),
             ]
-            max_tokens_list = [220, 50, 220]
+            max_tokens_list = [300, 60, 300]
             answers = []
             for prompt, max_tok in zip(prompts, max_tokens_list):
                 raw = self.llm.generate(prompt, max_tokens=max_tok)
                 _, r = self._parse_output(raw)
                 answers.append(r)
+
             valid = [a for a in answers if a is not None]
             if valid:
                 counts = {}
@@ -206,7 +207,7 @@ Chỉ trả về đúng 1 ký tự là đáp án đúng nhất (A, B, C hoặc D
         prompt = self._COT_PROMPT.format(
             fewshot=fewshot_block, context=ctx_short, question=full_question
         )
-        raw = self.llm.generate(prompt, max_tokens=220)  # giảm 300→220
+        raw = self.llm.generate(prompt, max_tokens=300)
         n, r = self._parse_output(raw)
         if r:
             return json.dumps({"numbers": n, "result": r}, ensure_ascii=False)
@@ -214,17 +215,17 @@ Chỉ trả về đúng 1 ký tự là đáp án đúng nhất (A, B, C hoặc D
         prompt_direct = self._DIRECT_PROMPT.format(
             fewshot="", context=ctx_short, question=full_question
         )
-        raw2 = self.llm.generate(prompt_direct, max_tokens=40)  # giảm 60→40
+        raw2 = self.llm.generate(prompt_direct, max_tokens=60)
         n2, r2 = self._parse_output(raw2)
         if r2:
             return json.dumps({"numbers": n2, "result": r2}, ensure_ascii=False)
 
         prompt_force = self._FORCE_PROMPT.format(
-            question=full_question, context=context[:600]
+            question=full_question, context=context[:800]
         )
         raw_force = self.llm.generate(prompt_force, max_tokens=5)
         letters   = self._extract_letters(raw_force)
         if letters:
             return json.dumps({"numbers": 1, "result": letters[0]}, ensure_ascii=False)
 
-        return json.dumps({"numbers": 1, "result": "A"}, ensure_ascii=False)
+        return json.dumps({"numbers": 1, "result": ""}, ensure_ascii=False)
