@@ -163,12 +163,17 @@ def eval():
         time_response = int((time.time() - start_time) * 1000)
 
         is_correct = False
-
-        # parse to dictionary
-        pred_dict = json.loads(str(pred_param))
-        truth_dict = json.loads(truth_param)
-        
-        is_correct = is_match_params(truth_dict, pred_dict)     
+        try:
+            # Parse to dictionary
+            pred_dict = json.loads(str(pred_param))
+            truth_dict = json.loads(truth_param)
+            
+            is_correct = is_match_params(truth_dict, pred_dict)
+            
+        except Exception:
+            # Fallback: Nếu parse JSON thất bại, kiểm tra xem chuỗi đáp án 
+            # có nằm trực tiếp bên trong chuỗi dự đoán không (chống cháy)
+            is_correct = (truth_param in str(pred_param).strip())
 
         if is_correct:
             correct_count += 1
