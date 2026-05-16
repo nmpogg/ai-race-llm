@@ -7,8 +7,8 @@ class APIRetriever:
         self.df_api = pd.read_excel(api_path, sheet_name="Doc_api_for_contest")
         self.df_api['search_text'] = (
             self.df_api['name'].fillna('') + " " + 
-            self.df_api['description'].fillna('') + " "
-            # self.df_api['Example question'].fillna('')
+            self.df_api['description'].fillna('') + " " +
+            self.df_api['Example question'].fillna('')
         )
         self.tokenized_corpus = [self._tokenize(t) for t in self.df_api['search_text']]
         self.bm25 = BM25Okapi(self.tokenized_corpus)
@@ -28,3 +28,8 @@ class APIRetriever:
                 configs.append(f"Tên API: {row['name']}\nCấu hình:\n{row['Endpoint config']}")
         
         return "\n---\n".join(configs)
+    
+if __name__ == "__main__":
+    retriever = APIRetriever(api_path="../../data/API_config_data/Tài liệu config API.xlsx")
+    question = "Trong T10/2025, tôi muốn xem các thông số leakage rate trong kỳ của dự án BU05.VTT.MyViettel có các giá trị như nào"
+    print(retriever.get_top_apis_config(question, top_k=3))
