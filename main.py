@@ -91,6 +91,38 @@ def load_service():
     doc_agent = DocAgent(llm_service, DIR_INDEX_DATA)
     print("Đã nạp thành công toàn bộ Services và Agents!")
 
+
+def is_match_params(truth, pred):
+    """
+    Thuật toán kiểm tra Subset Matching cho JSON.
+    Chỉ cần 'pred' (dự đoán) chứa đầy đủ các key/value của 'truth' (đáp án) là True.
+    """
+    # Xử lý nếu là Dictionary
+    if isinstance(truth, dict) and isinstance(pred, dict):
+        for key, expected_value in truth.items():
+            if key not in pred:
+                return False # Thiếu key so với đáp án gốc
+            
+            # Đệ quy kiểm tra value bên trong
+            if not is_match_params(expected_value, pred[key]):
+                return False
+        return True
+        
+    # Xử lý nếu là Mảng (List)
+    elif isinstance(truth, list) and isinstance(pred, list):
+        if len(truth) != len(pred):
+            return False
+        # Kiểm tra từng phần tử trong mảng
+        for t_item, p_item in zip(truth, pred):
+            if not is_match_params(t_item, p_item):
+                return False
+        return True
+        
+    # Xử lý giá trị đơn (Chuỗi, Số nguyên, Float, Boolean)
+    else:
+        # Ép về chuỗi và cắt khoảng trắng 2 đầu để so sánh chống lỗi typo
+        return str(truth).strip() == str(pred).strip()
+
 def eval():
     global router, api_agent, doc_agent
     print("Bắt đầu evaluation trên tập dữ liệu Train...")
@@ -131,12 +163,12 @@ def eval():
         time_response = int((time.time() - start_time) * 1000)
 
         is_correct = False
-        try:
-            pred_dict = json.loads(str(pred_param))
-            truth_dict = json.loads(truth_param)
-            is_correct = (pred_dict == truth_dict)
-        except Exception:
-            is_correct = (str(pred_param).strip() == truth_param)
+
+        # parse to dictionary
+        pred_dict = json.loads(str(pred_param))
+        truth_dict = json.loads(truth_param)
+        
+        is_correct = is_match_params(truth_dict, pred_dict)     
 
         if is_correct:
             correct_count += 1
