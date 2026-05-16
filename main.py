@@ -5,8 +5,8 @@ import csv
 import pandas as pd
 import json
 import pickle
-from src.preprocess.pdf2md import process_pdf_data
-from src.preprocess.chunking import MarkdownChunker
+from src.preprocess.pdf2md import batch_convert
+from src.preprocess.chunking import chunk_directory
 from src.preprocess.build_index import build_index
 from src.llm import LLMService
 from src.router import RouterAgent
@@ -21,7 +21,7 @@ DIR_CHUNK_DATA_JSON   = "./data/knowledge/chunks.json"
 DIR_CHUNK_DATA_PKL   = "./data/knowledge/chunks.pkl"
 DIR_INDEX_DATA    = "./data/knowledge" # faiss.index, chunks.pkl, bm25.pkl
 
-RUN_PDF_TO_MD = not os.path.exists(FILE_MASTER_MD)
+RUN_PDF_TO_MD = not os.path.exists(DIR_MD_OUTPUT) or len(os.listdir(DIR_MD_OUTPUT)) == 0
 RUN_CHUNKING = not os.path.exists(DIR_CHUNK_DATA_JSON) and not os.path.exists(DIR_CHUNK_DATA_PKL)
 RUN_BUILD_INDEX = not (
     os.path.exists(DIR_INDEX_DATA) and 
@@ -52,22 +52,16 @@ def load_service():
     print("🚀 KHỞI ĐỘNG HỆ THỐNG AI RACE PIPELINE...")
     
     if RUN_PDF_TO_MD:
-        process_pdf_data(DIR_PDF_INPUT, DIR_MD_OUTPUT, FILE_MASTER_MD)
+        batch_convert(DIR_PDF_INPUT, DIR_MD_OUTPUT, debug=False)
 
     chunks = None
 
     if RUN_CHUNKING:
-        chunker = MarkdownChunker(max_chunk_size=3000)
-        chunks = list(chunker.stream_and_chunk(FILE_MASTER_MD))
-        print(f"Đã tạo thành công {len(chunks)} chunks!")
-
+        output = chunk_directory(DIR_MD_OUTPUT, DIR_CHUNK_DATA_JSON)
+        chunks = output["chunks"]
         # lưu toàn bộ list chunks ra file .pkl
         with open(DIR_CHUNK_DATA_PKL, "wb") as f:
             pickle.dump(chunks, f)
-        
-        # .json for check
-        with open(DIR_CHUNK_DATA_JSON, "w", encoding="utf-8") as f:
-            json.dump(chunks, f, ensure_ascii=False, indent=2)
             
         print(f"Đã lưu toàn bộ dữ liệu ra file: {DIR_CHUNK_DATA_PKL} và {DIR_CHUNK_DATA_JSON}")
 
