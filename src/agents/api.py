@@ -18,9 +18,9 @@ class APIAgent:
             text = text[:-3]
         return text.strip()
 
-    def process(self, question):
+    def process(self, question, top_k=5):
  
-        api_configs = self.retriever.get_top_apis_config(question, k=5)
+        api_configs = self.retriever.get_top_apis_config(question, top_k=top_k)
  
         # Dùng chat format thay vì raw prompt
         user_msg = build_user_prompt(question, api_configs)
