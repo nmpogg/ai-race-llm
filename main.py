@@ -55,7 +55,6 @@ def load_service():
         print("Chưa tìm thấy các file Markdown. Bắt đầu chuyển đổi PDF sang Markdown...")
         batch_convert(DIR_PDF_INPUT, DIR_MD_OUTPUT, debug=False)
     print("Đã tìm thấy các file Markdown!")
-    chunks = None
 
     if RUN_CHUNKING:
         print("Chưa tìm thấy dữ liệu chunking. Bắt đầu tạo chunks từ file Markdown...")
@@ -66,13 +65,8 @@ def load_service():
 
     if RUN_BUILD_INDEX:
         print("Chưa tìm thấy Index. Bắt đầu xây dựng Index từ chunks...")
-        if chunks is None:
-            print("Đang nạp chunks từ file pickle để build index...")
-            with open(DIR_CHUNK_DATA_PKL, "rb") as f:
-                chunks = pickle.load(f)
-        build_index(chunks, DIR_INDEX_DATA)
+        build_index(DIR_CHUNK_DATA_JSON, DIR_INDEX_DATA)
 
-    del chunks
     gc.collect()
     print("Đã tìm thấy Index!")
     # load service

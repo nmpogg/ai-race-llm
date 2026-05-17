@@ -14,92 +14,124 @@ class DocAgent:
         
         print("Đang load hệ thống Hybrid Retrieval...")
         
-        # load chunks
-        with open(os.path.join(index_dir, "chunks.pkl"), "rb") as f:
-            self.chunks = pickle.load(f)
+        # Load chunk_store.pkl - dict {"id_map": [...], "store": {...}}
+        with open(os.path.join(index_dir, "chunk_store.pkl"), "rb") as f:
+            payload = pickle.load(f)
+        self.id_map = payload["id_map"]   # list: faiss_position → chunk_id
+        self.store  = payload["store"]    # dict: chunk_id → full chunk
             
-        # SQLite Database
+        # SQLite
         self.db_path = os.path.join(index_dir, "bm25_index.db")
         if not os.path.exists(self.db_path):
-            print(f"Cảnh báo: Không tìm thấy file {self.db_path}. Hãy build index trước!")
+            print(f"Cảnh báo: Không tìm thấy {self.db_path}. Hãy build index trước!")
             
-        # load faiss & embedding model
+        # FAISS + embedding model
         self.faiss_index = faiss.read_index(os.path.join(index_dir, "faiss.index"))
         self.embed_model = SentenceTransformer("keepitreal/vietnamese-sbert")
         
-        # load cross-encoder reranker
+        # Reranker
         self.reranker = CrossEncoder("cross-encoder/mmarco-mMiniLMv2-L12-H384-v1")
         print("Đã load thành công DocAgent.")
 
-    def retrieve_bm25_sqlite(self, question, top_k=10):
+
+    def retrieve_bm25_sqlite(self, question: str, top_k: int = 10) -> list[str]:
+        """Trả về list chunk_id (str), không phải int index."""
         clean_query = re.sub(r'[^\w\s]', ' ', question).strip()
         if not clean_query:
             return []
             
         try:
-            # Mở kết nối tạm thời và truy vấn siêu tốc
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            
-            cursor.execute('''
-                SELECT chunk_id 
-                FROM bm25_chunks 
-                WHERE bm25_chunks MATCH ? 
-                ORDER BY rank 
-                LIMIT ?
-            ''', (clean_query, top_k))
-            
+            cursor.execute(
+                """SELECT chunk_id
+                FROM bm25_chunks
+                WHERE bm25_chunks MATCH ?
+                ORDER BY rank
+                LIMIT ?""",
+                (clean_query, top_k)
+            )
             result_ids = [row[0] for row in cursor.fetchall()]
             conn.close()
             return result_ids
-            
         except sqlite3.OperationalError as e:
-            # Bắt lỗi an toàn nếu có từ khóa quá lạ
             print(f"Lỗi truy vấn BM25: {e}")
             return []
 
-    def retrieve_and_rerank(self, question, top_k_retrieve=10, top_k_rerank=7):
-        """Hàm truy xuất kết hợp và xếp hạng lại (Hybrid Search)"""
-        
-        # truy xuất bằng FAISS
+
+    def _chunk_to_context(self, chunk: dict) -> str:
+        """Format 1 chunk thành string context để đưa vào reranker + LLM."""
+        meta    = chunk["metadata"]
+        content = chunk["content"]
+        source  = meta.get("source_file", "Unknown")
+        section = meta.get("section", "")
+
+        header_parts = [f"[Trích từ: {source}]"]
+        if section:
+            header_parts.append(f"[Mục: {section}]")
+
+        # Với table chunk: strip HTML để reranker đọc được
+        if chunk["chunk_type"] == "table":
+            table_name = meta.get("table_name", "")
+            if table_name:
+                header_parts.append(f"[Bảng: {table_name}]")
+            plain = re.sub(r'<[^>]+>', ' ', content)
+            plain = re.sub(r'\s+', ' ', plain).strip()
+            body = plain
+        else:
+            body = content
+
+        return "\n".join(header_parts) + "\n" + body
+
+
+    def retrieve_and_rerank(
+        self,
+        question: str,
+        top_k_retrieve: int = 10,
+        top_k_rerank: int = 7,
+    ) -> str:
         q_emb = self.embed_model.encode([question], convert_to_numpy=True)
         faiss.normalize_L2(q_emb)
         _, faiss_indices = self.faiss_index.search(q_emb, top_k_retrieve)
-        # chỉ lấy các ID hợp lệ (khác -1)
-        faiss_ids = [int(i) for i in faiss_indices[0] if i != -1]
 
-        # tuy xuất bằng BM25
-        bm25_ids = self.retrieve_bm25_sqlite(question, top_k_retrieve)
+        faiss_chunk_ids = [
+            self.id_map[int(i)]
+            for i in faiss_indices[0]
+            if i != -1 and int(i) < len(self.id_map)
+        ]
 
-        # merged
-        combined_ids = list(set(faiss_ids + bm25_ids))
-        
-        if not combined_ids:
+        #  BM25 retrieve → chunk_id 
+        bm25_chunk_ids = self.retrieve_bm25_sqlite(question, top_k_retrieve)
+
+        # Merge, dedup, giữ thứ tự (FAISS trước, BM25 sau)
+        seen = set()
+        combined_chunk_ids = []
+        for cid in faiss_chunk_ids + bm25_chunk_ids:
+            if cid not in seen and cid in self.store:
+                seen.add(cid)
+                combined_chunk_ids.append(cid)
+
+        if not combined_chunk_ids:
             return ""
-
-        candidate_contexts = []
-        for cid in combined_ids:
-            if 0 <= cid < len(self.chunks):
-                chunk_obj = self.chunks[cid]
-                source = chunk_obj.get("metadata", {}).get("source", "Unknown")
-                text = chunk_obj.get("text", "")
-                
-                candidate_contexts.append(f"[Trích từ: {source}]\n{text}")
-
-        if not candidate_contexts:
-            return ""
-
-        # rerank
-        cross_inp = [[question, ctx] for ctx in candidate_contexts]
-        cross_scores = self.reranker.predict(cross_inp)
         
-        scored_chunks = list(zip(cross_scores, candidate_contexts))
-        scored_chunks.sort(key=lambda x: x[0], reverse=True)
-        
-        # top_k_rerank kết quả tốt nhất
-        best_chunks = [chunk for score, chunk in scored_chunks[:top_k_rerank]]
-        
-        return "\n\n---\n\n".join(best_chunks)
+        candidate_contexts = [
+            self._chunk_to_context(self.store[cid])
+            for cid in combined_chunk_ids
+        ]
+
+        # Rerank
+        cross_scores = self.reranker.predict(
+            [[question, ctx] for ctx in candidate_contexts]
+        )
+
+        scored = sorted(
+            zip(cross_scores, candidate_contexts),
+            key=lambda x: x[0],
+            reverse=True,
+        )
+
+        best = [ctx for _, ctx in scored[:top_k_rerank]]
+        return "\n\n---\n\n".join(best)
 
     def process(self, question, note="", top_k_retrieve=10, top_k_rerank=7):
         # Retrieve & rerank
@@ -111,6 +143,7 @@ class DocAgent:
         prompt = f"""<|im_start|>system
 Bạn là hệ thống trích xuất thông tin tự động dựa trên tài liệu.
 Nhiệm vụ của bạn là đọc [TÀI LIỆU CUNG CẤP] và trả lời câu hỏi dưới ĐỊNH DẠNG JSON.
+Nếu là câu hỏi vận dụng để tính toán, nếu [TÀI LIỆU CUNG CẤP] không có thông tin hữu ích, hãy tự tính toán dựa trên kiến thức chung của bạn.
 TUYỆT ĐỐI CHỈ TRẢ VỀ ĐÚNG 1 ĐỐI TƯỢNG JSON VỚI 2 TRƯỜNG SAU:
 - "numbers": Một số nguyên (Ví dụ: 1, 2, 3...) là số lượng đáp án đúng.
 - "result": Một hoặc nhiều chữ cái cách nhau bởi dấu ',' đại diện cho đáp án trắc nghiệm (A, B, C, hoặc D).

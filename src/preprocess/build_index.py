@@ -203,8 +203,6 @@ def build_index(
     print(f"  - bm25_index.db")
 
 
-# ── Retrieve example ──────────────────────────────────────────────────────────
-
 def retrieve_example(query: str, output_dir: str, top_k: int = 5):
     """Ví dụ retrieve flow dùng chunk_store.pkl."""
     from sentence_transformers import SentenceTransformer
