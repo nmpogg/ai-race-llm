@@ -394,7 +394,10 @@ def chunk_directory(
         "chunks": all_chunks,
     }
 
-    Path(output_json).write_text(
+    output_path = Path(output_json)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    output_path.write_text(
         json.dumps(output, ensure_ascii=False, indent=2),
         encoding="utf-8"
     )

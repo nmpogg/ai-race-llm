@@ -17,7 +17,7 @@ from src.agents.document import DocAgent
 DIR_PDF_INPUT     = "./data/Document_config_data"
 DIR_MD_OUTPUT     = "./data/markdown"
 FILE_MASTER_MD    = "./data/markdown/corpus.md"
-DIR_CHUNK_DATA_JSON   = "./data/knowledge/chunks.json"
+DIR_CHUNK_DATA_JSON   = "./data/knowledge/all_chunks.json"
 DIR_CHUNK_DATA_PKL   = "./data/knowledge/chunks.pkl"
 DIR_INDEX_DATA    = "./data/knowledge" # faiss.index, chunks.pkl, bm25.pkl
 
@@ -52,20 +52,20 @@ def load_service():
     print("🚀 KHỞI ĐỘNG HỆ THỐNG AI RACE PIPELINE...")
     
     if RUN_PDF_TO_MD:
+        print("Chưa tìm thấy các file Markdown. Bắt đầu chuyển đổi PDF sang Markdown...")
         batch_convert(DIR_PDF_INPUT, DIR_MD_OUTPUT, debug=False)
-
+    print("Đã tìm thấy các file Markdown!")
     chunks = None
 
     if RUN_CHUNKING:
-        output = chunk_directory(DIR_MD_OUTPUT, DIR_CHUNK_DATA_JSON)
-        chunks = output["chunks"]
-        # lưu toàn bộ list chunks ra file .pkl
-        with open(DIR_CHUNK_DATA_PKL, "wb") as f:
-            pickle.dump(chunks, f)
+        print("Chưa tìm thấy dữ liệu chunking. Bắt đầu tạo chunks từ file Markdown...")
+        chunk_directory(DIR_MD_OUTPUT, DIR_CHUNK_DATA_JSON)
             
-        print(f"Đã lưu toàn bộ dữ liệu ra file: {DIR_CHUNK_DATA_PKL} và {DIR_CHUNK_DATA_JSON}")
+        # print(f"Đã lưu toàn bộ dữ liệu ra file: {DIR_CHUNK_DATA_PKL} và {DIR_CHUNK_DATA_JSON}")
+    print("Đã tìm thấy dữ liệu chunking!")
 
     if RUN_BUILD_INDEX:
+        print("Chưa tìm thấy Index. Bắt đầu xây dựng Index từ chunks...")
         if chunks is None:
             print("Đang nạp chunks từ file pickle để build index...")
             with open(DIR_CHUNK_DATA_PKL, "rb") as f:
@@ -74,7 +74,7 @@ def load_service():
 
     del chunks
     gc.collect()
-    
+    print("Đã tìm thấy Index!")
     # load service
     print("Loading LLM Service, Router, API Retriever, API Agent, Document Agent...")
     llm_service = LLMService(model_path=MODEL_NAME)
