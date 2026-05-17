@@ -257,17 +257,22 @@ def infer():
     print(f"Success! File nộp bài đã lưu tại: {FILE_SUBMISSION}")
     
 if __name__ == "__main__":
-    load_service() 
+    load_service()
     print("Chọn options:\n" \
     "0 - eval + infer\n" \
     "1 - Chỉ eval\n" \
-    "2 - Chỉ infer")
+    "2 - Chỉ infer\n" \
+    "3 - Chỉ kiểm tra Router (Công việc 8)")
     n = input("Nhập lựa chọn của bạn: ").strip()
     if n == "0":
         eval()
         infer()
-    elif n == "1": 
+    elif n == "1":
         eval()
     elif n == "2":
         infer()
-    else:        print("Lựa chọn không hợp lệ. Vui lòng chạy lại và chọn 0, 1 hoặc 2.")
+    elif n == "3":
+        router_only = RouterAgent()
+        router_only.evaluate(FILE_TRAIN_DATA)
+    else:
+        print("Lựa chọn không hợp lệ. Vui lòng chạy lại và chọn 0, 1, 2 hoặc 3.")
