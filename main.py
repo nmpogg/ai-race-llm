@@ -4,7 +4,7 @@ import time
 import csv
 import pandas as pd
 import json
-import pickle
+import torch
 from src.preprocess.pdf2md import batch_convert
 from src.preprocess.chunking import chunk_directory
 from src.preprocess.build_index import build_index
@@ -28,7 +28,7 @@ RUN_BUILD_INDEX = not (
     os.path.exists(os.path.join(DIR_INDEX_DATA, "faiss.index"))
 )
 
-MODEL_NAME = "Qwen/Qwen2.5-1.5B-Instruct"
+MODEL_NAME = "Qwen/Qwen2.5-3B-Instruct"
 TOP_K_API = 5
 TOP_K_RETRIEVE = 10
 TOP_K_RERANK = 7
@@ -180,6 +180,10 @@ def eval():
             current_acc = (correct_count / (index + 1)) * 100
             print(f"Đã xử lý {index + 1}/{total_questions} câu... Acc tạm thời: {current_acc:.2f}%")
 
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
     final_accuracy = (correct_count / total_questions) * 100 if total_questions > 0 else 0
     
     print("BÁO CÁO KẾT QUẢ ĐÁNH GIÁ (EVALUATION)")
@@ -238,6 +242,10 @@ def infer():
         
         if (index + 1) % 10 == 0: 
             print(f"Đã xử lý {index + 1}/{len(df_test)} câu...")
+
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     # save submission file
     pd.DataFrame(results).to_csv(

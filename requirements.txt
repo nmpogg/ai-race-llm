@@ -13,3 +13,6 @@ rank-bm25
 pymupdf
 pymupdf4llm
 pdfplumber
+
+#llm
+bitsandbytes

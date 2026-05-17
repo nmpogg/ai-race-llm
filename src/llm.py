@@ -2,7 +2,7 @@ import torch
 from transformers import pipeline
 
 class LLMService:
-    def __init__(self, model_path="Qwen/Qwen2.5-1.5B-Instruct"):
+    def __init__(self, model_path="Qwen/Qwen2.5-3B-Instruct"):
         print(f"Đang khởi tạo model: {model_path}...")
         
         self.pipe = pipeline(
