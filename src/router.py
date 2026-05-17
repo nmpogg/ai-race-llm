@@ -28,6 +28,26 @@ class RouterAgent:
         r'chỉ\s*số',
         r'xếp\s*hạng',
         r'nhân\s*sự(?=.*(trung\s*tâm|202\d|\bttpm|\btt\b))',
+
+        # Nhóm 1: Chỉ số tài chính
+        r'\bebitda\b',
+        r'\bròng\b',
+        r'chỉ\s*số\s*tài\s*chính',
+        r'\bkh\b(?=.*(th\b|thực hiện))',  # KH / TH (kế hoạch / thực hiện)
+
+        # Nhóm 2: Tài sản
+        r'tài\s*sản(?=.*(hiện có|mua mới|tồn kho|cấp phát|nhóm))',
+        r'tồn\s*kho\s*sx',
+        r'cấp\s*phát\s*đặc\s*thù',
+        r'nhóm\s*tài\s*sản',
+
+        # Nhóm 3: Dự án / ticket tracking
+        r'\b[A-Z]{2}\d{2}\.[A-Z]+\.[A-Za-z0-9]+\b',  # BU01.BCN.SAP, BU05.VCS.ThreaIntel
+        r'\bepic\b',
+        r'\buser\s*stor\w*\b',
+        r'\b(us|cr|task)\b(?=.*(trạng thái|status|open|done|resolved|reopened|in.progress))',
+        r'trạng\s*thái(?=.*(open|done|resolved|reopened|in.progress|closed))',
+        r'số\s*lượng\s*(epic|task|us\b|cr\b)',
     ]
 
     TIME_PATTERNS = [
@@ -39,12 +59,21 @@ class RouterAgent:
         r'(?:tháng|t)\s*\d{1,2}/\d{4}\s*(?:-|->|đến)\s*(?:tháng|t)\s*\d{1,2}/\d{4}',
         r't\d{1,2}/202\d\s*[-–]\s*t\d{1,2}/202\d',
         r'\bnăm\s+202\d\b',
+
+        # Nhóm 1: Range quý
+        r'quý\s*\d/\d{4}\s*[-–]\s*quý\s*\d/\d{4}',       # Quý 4/2024 - Quý 2/2025
+        r'quý\s*\d/\d{4}\s*(đến|->)\s*quý\s*\d/\d{4}',
+
+        # Nhóm 3: "ở thời điểm tháng X/YYYY"
+        r'thời\s*điểm\s*tháng\s*\d{1,2}/202\d',
+        r'vào\s*tháng\s*\d{1,2}/202\d',
     ]
 
     API_INTENT_PATTERNS = [
         r'(xem|tra\s*cứu|lấy|get|fetch)\s+.{0,30}(số\s*liệu|dữ\s*liệu|thông\s*tin|chỉ\s*số)',
         r'(tôi\s+muốn\s+xem|cho\s+tôi\s+xem)',
         r'(thực\s*hiện|kế\s*hoạch)\s+(?:là|bao\s*nhiêu)',
+        r'lọc\s*ra.{0,30}(status|trạng\s*thái)',           # "Lọc ra những status..."
     ]
 
     def classify(self, question: str) -> str:
@@ -74,34 +103,27 @@ class RouterAgent:
 
         df_q  = pd.read_excel(example_file, sheet_name="example_question")
         df_rs = pd.read_excel(example_file, sheet_name="example_result")
+        df    = pd.merge(df_q, df_rs, on="id", how="inner")
 
-        df = pd.merge(df_q, df_rs, on="id", how="inner")
-
-        total   = len(df)
-        correct = 0
-        errors  = []
-
+        total, correct = len(df), 0
         api_total, api_correct = 0, 0
         doc_total, doc_correct = 0, 0
+        errors = []
 
         for _, row in df.iterrows():
             question   = str(row["fun_question"])
             truth_code = str(row["func_code"]).strip()
             pred_code  = self.classify(question)
+            is_ok      = (pred_code == truth_code)
 
-            is_ok = (pred_code == truth_code)
             if is_ok:
                 correct += 1
-
             if truth_code == "call_api":
                 api_total += 1
-                if is_ok:
-                    api_correct += 1
+                if is_ok: api_correct += 1
             else:
                 doc_total += 1
-                if is_ok:
-                    doc_correct += 1
-
+                if is_ok: doc_correct += 1
             if not is_ok:
                 errors.append({
                     "id":       row["id"],
