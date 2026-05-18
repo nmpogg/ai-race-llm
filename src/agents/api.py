@@ -128,11 +128,6 @@ class APIAgent:
         "odc":               "odc",      "t&m":               "T&M",
         "time and material": "T&M",      "presale":           "presales",
         "presales":          "presales",
-        "package":           "Package",  "gói":               "Package",
-        "osdc":              "osdc",     "odc/osdc":          "odc/osdc",
-        "odc":               "odc",      "t&m":               "T&M",
-        "time and material": "T&M",      "presale":           "presales",
-        "presales":          "presales",
     }
 
 
@@ -294,18 +289,6 @@ class APIAgent:
 
         all_params     = cfg.get("required_params", []) + cfg.get("optional_params", [])
         from_date, to_date = self._extract_dates(question)
-        orgs           = self._extract_orgs(question)
-        proj_types     = self._extract_enum(question, self.PROJECT_TYPE_MAP)
-        proj_status    = self._extract_enum(question, self.PROJECT_STATUS_MAP)
-        asset_groups   = self._extract_enum(question, self.ASSET_GROUP_MAP)
-        lcnt_options   = self._extract_enum(question, self.LCNT_OPTION_MAP)
-        lcnt_types     = self._extract_enum(question, self.LCNT_TYPE_MAP)
-        bid_plan_types = self._extract_enum(question, self.BID_PLAN_TYPE_MAP)
-        type_val       = self._extract_type(question)
-        sort_val       = self._extract_sort(question)
-        std_comp       = self._extract_standard_comparison(question)
-        org_code       = self._extract_org_code(question)
-        summary_date   = self._extract_summary_date(question)
         orgs           = self._extract_orgs(question)
         proj_types     = self._extract_enum(question, self.PROJECT_TYPE_MAP)
         proj_status    = self._extract_enum(question, self.PROJECT_STATUS_MAP)
