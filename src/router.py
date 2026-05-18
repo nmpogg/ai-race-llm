@@ -32,7 +32,7 @@ class RouterAgent:
         r"đáp án (nào|đúng|sau|sau đây|dưới đây)",
         r"phương án (nào|đúng|sau|sau đây)",
         r"(câu|ý|phát biểu|nhận định|khẳng định)\s+nào\s+(sau đây|dưới đây|đúng|sai|chính xác)",
-        r"(đúng|sai|chính xác|không đúng|không chính xác)\s*\??\s*$",
+        r"(đúng|sai|chính xác|không đúng|không chính xác)\s*\?\s*$",
         r"(chọn|lựa chọn)\s+(đáp án|phương án|câu trả lời)",
         r"trong (các|những) (đáp án|phương án|lựa chọn)",
         r"(tất cả|bao nhiêu).*(đúng|sai|chính xác)",

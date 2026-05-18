@@ -15,13 +15,12 @@ from src.retrieval.apiretriever import APIRetriever
 
 # CONFIG
 INPUT_FILE      = "./data/test_data/Test_data.xlsx"
-OUTPUT_FILE     = "/kaggle/working/result.csv"
-CHECKPOINT_FILE = "/kaggle/working/checkpoint.csv"
+OUTPUT_FILE     = "./data/output/result.csv"
+CHECKPOINT_FILE = "./data/output/checkpoint.csv"
 INDEX_DIR       = "./data/knowledge"
-API_CSV         = "/kaggle/working/api_config.csv"
+API_CSV         = "./data/API_config_data/api_config.csv"
 EXAMPLE_DIR     = "./data/example_data"
 USE_ENSEMBLE    = False
-DATA_DRIVE      = "/content/drive/MyDrive/ai-race-data"
 
 
 def _read_input(path: str) -> pd.DataFrame:
@@ -77,7 +76,6 @@ def process_row(row, router, doc_agent, api_agent) -> dict:
 
     t0 = time.time()
 
-    # Phân loại CHỈ dựa vào question — không dùng note trước khi route
     func_code = router.classify(question)
 
     # Chỉ sau khi có func_code mới được đọc note (nếu là call_document)
@@ -118,13 +116,6 @@ def load_checkpoint() -> set:
 def save_checkpoint(results: list):
     os.makedirs(os.path.dirname(CHECKPOINT_FILE), exist_ok=True)
     pd.DataFrame(results).to_csv(CHECKPOINT_FILE, index=False, encoding="utf-8-sig")
-    drive_ck = f"{DATA_DRIVE}/output/checkpoint.csv"
-    try:
-        if os.path.exists(DATA_DRIVE):
-            os.makedirs(os.path.dirname(drive_ck), exist_ok=True)
-            shutil.copy(CHECKPOINT_FILE, drive_ck)
-    except Exception:
-        pass
     print(f"💾 Checkpoint: {len(results)} câu.")
 
 

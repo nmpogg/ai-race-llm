@@ -5,6 +5,7 @@ import calendar
 
 class APIAgent:
 
+
     def __init__(self, llm_service, retriever, fewshot_loader=None):
         self.llm       = llm_service
         self.retriever = retriever
@@ -97,7 +98,6 @@ class APIAgent:
 
     # ENUM MAPS
 
-    # f1 base + f2 aliases mở rộng
     ORG_ALIASES = {
         "ttpmqt":   "TTPMQT",  "ttpmtcs":  "TTPMTCS", "ttpmvt":   "TTPMVT",
         "ttpmcnm":  "TTPMCNM", "ttpmcds":  "TTPMCDS", "ttcndt":   "TTCNDT",
@@ -128,7 +128,13 @@ class APIAgent:
         "odc":               "odc",      "t&m":               "T&M",
         "time and material": "T&M",      "presale":           "presales",
         "presales":          "presales",
+        "package":           "Package",  "gói":               "Package",
+        "osdc":              "osdc",     "odc/osdc":          "odc/osdc",
+        "odc":               "odc",      "t&m":               "T&M",
+        "time and material": "T&M",      "presale":           "presales",
+        "presales":          "presales",
     }
+
 
     PROJECT_STATUS_MAP = {
         "in-progress": "in-progress", "đang thực hiện": "in-progress",
@@ -225,7 +231,6 @@ class APIAgent:
     )
 
     def _select_and_extract_params(self, question: str, top_df) -> tuple[str | None, dict]:
-        # Giữ description[:200] và example[:150] từ f1 — context đầy đủ hơn
         api_list_str = "\n---\n".join(
             f"func_code: {row['func_code']}\n"
             f"Mô tả: {row.get('description', '')[:200]}\n"
@@ -242,8 +247,7 @@ class APIAgent:
             api_list=api_list_str,
             question=question,
         )
-        # Giữ max_tokens=250 từ f1 — đủ chỗ cho JSON phức tạp
-        raw = self.llm.generate(prompt, max_tokens=250).strip()
+        raw = self.llm.generate(prompt, max_tokens=200).strip()  # giảm 250→200
 
         selected_fc = None
         llm_params  = {}
@@ -290,6 +294,18 @@ class APIAgent:
 
         all_params     = cfg.get("required_params", []) + cfg.get("optional_params", [])
         from_date, to_date = self._extract_dates(question)
+        orgs           = self._extract_orgs(question)
+        proj_types     = self._extract_enum(question, self.PROJECT_TYPE_MAP)
+        proj_status    = self._extract_enum(question, self.PROJECT_STATUS_MAP)
+        asset_groups   = self._extract_enum(question, self.ASSET_GROUP_MAP)
+        lcnt_options   = self._extract_enum(question, self.LCNT_OPTION_MAP)
+        lcnt_types     = self._extract_enum(question, self.LCNT_TYPE_MAP)
+        bid_plan_types = self._extract_enum(question, self.BID_PLAN_TYPE_MAP)
+        type_val       = self._extract_type(question)
+        sort_val       = self._extract_sort(question)
+        std_comp       = self._extract_standard_comparison(question)
+        org_code       = self._extract_org_code(question)
+        summary_date   = self._extract_summary_date(question)
         orgs           = self._extract_orgs(question)
         proj_types     = self._extract_enum(question, self.PROJECT_TYPE_MAP)
         proj_status    = self._extract_enum(question, self.PROJECT_STATUS_MAP)
@@ -422,6 +438,7 @@ class APIAgent:
         return path
 
     # MAIN PROCESS
+
 
     def process(self, question: str) -> str:
         top_df = self.retriever.get_top_apis_df(question, k=5)

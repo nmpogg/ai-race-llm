@@ -3,13 +3,14 @@ from transformers import pipeline, BitsAndBytesConfig
 
 
 class LLMService:
-    """
-    Local LLM wrapper dùng Qwen2.5-3B-Instruct với 4-bit quantization.
-    Chạy được trên Colab T4 free, dùng ~2.5GB VRAM.
-    """
-
-    def __init__(self, model_path: str = "Qwen/Qwen2.5-3B-Instruct"):
+    def __init__(self, model_path: str = "Qwen/Qwen2.5-7B-Instruct"):
         print(f"🔄 Đang khởi tạo model: {model_path} (4-bit quantized)...")
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            free, total = torch.cuda.mem_get_info()
+            print(f"   GPU: {torch.cuda.get_device_name(0)}")
+            print(f"   VRAM: {free/1024**3:.1f}GB free / {total/1024**3:.1f}GB total")
 
         bnb_config = BitsAndBytesConfig(
             load_in_4bit=True,
@@ -28,6 +29,10 @@ class LLMService:
             },
         )
         self.pipe.tokenizer.padding_side = "left"
+
+        if torch.cuda.is_available():
+            free, _ = torch.cuda.mem_get_info()
+            print(f"   VRAM sau load: {free/1024**3:.1f}GB free")
         print("✅ Model đã sẵn sàng.")
 
     def generate(self, prompt: str, max_tokens: int = 512) -> str:
