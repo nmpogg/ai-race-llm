@@ -27,10 +27,10 @@ class DocAgent:
             
         # FAISS + embedding model
         self.faiss_index = faiss.read_index(os.path.join(index_dir, "faiss.index"))
-        self.embed_model = SentenceTransformer("keepitreal/vietnamese-sbert")
+        self.embed_model = SentenceTransformer("AITeamVN/Vietnamese_Embedding_v2")
         
         # Reranker
-        self.reranker = CrossEncoder("cross-encoder/mmarco-mMiniLMv2-L12-H384-v1")
+        self.reranker = CrossEncoder("AITeamVN/Vietnamese_Reranker")
         print("Đã load thành công DocAgent.")
 
 

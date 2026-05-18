@@ -97,7 +97,7 @@ def load_chunk_store(output_dir: str) -> tuple[list[str], dict]:
 
 def build_faiss_index(chunks: list[dict], output_dir: str):
     print("Đang tải mô hình Embedding...")
-    embed_model = SentenceTransformer("keepitreal/vietnamese-sbert")
+    embed_model = SentenceTransformer("AITeamVN/Vietnamese_Embedding_v2")
 
     texts = [_chunk_to_embed_text(c) for c in chunks]
 
