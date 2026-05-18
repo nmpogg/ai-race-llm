@@ -148,7 +148,7 @@ def eval():
         else:
             pred_param = doc_agent.process(question, note, top_k_retrieve=TOP_K_RETRIEVE, top_k_rerank=TOP_K_RERANK)
             
-        time_response = int((time.time() - start_time) * 1000)
+        time_response = round(time.time() - start_time, 2)
 
         is_correct = False
         try:
@@ -173,7 +173,7 @@ def eval():
             "predicted_param": pred_param,
             "truth_param": truth_param,
             "is_correct": is_correct,
-            "time_response": time_response
+            "time": time_response
         })
         
         if (index + 1) % 10 == 0: 
@@ -237,7 +237,7 @@ def infer():
             "id": q_id,
             "func_code": func_code,
             "func_param": func_param,
-            "time_response": int((time.time() - start_time) * 1000)
+            "time": round(time.time() - start_time, 2)
         })
         
         if (index + 1) % 10 == 0: 
