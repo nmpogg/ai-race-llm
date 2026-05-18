@@ -5,7 +5,7 @@ import re
 import faiss
 import numpy as np
 from sentence_transformers import CrossEncoder, SentenceTransformer
-
+import sqlite3
 
 class DocAgent:
 
@@ -21,12 +21,25 @@ class DocAgent:
         self.use_ensemble = use_ensemble
 
         print("DocAgent: Đang load Hybrid Retrieval...")
-        with open(os.path.join(index_dir, "chunks.pkl"), "rb") as f:
-            self.chunks = pickle.load(f)
-        with open(os.path.join(index_dir, "bm25.pkl"), "rb") as f:
-            self.bm25 = pickle.load(f)
+
+        # Load chunk_store (id_map + store)
+        import pickle, sqlite3
+        pkl_path = os.path.join(index_dir, "chunk_store.pkl")
+        with open(pkl_path, "rb") as f:
+            payload = pickle.load(f)
+        self.id_map = payload["id_map"]          # list[str]
+        self.store  = payload["store"]           # dict[chunk_id → chunk]
+        # Danh sách content theo thứ tự id_map (để reranker dùng)
+        self.chunks = [self.store[cid]["content"] for cid in self.id_map]
+
+        # BM25: SQLite FTS5
+        self.bm25_db = os.path.join(index_dir, "bm25_index.db")
+
+        # FAISS
         self.faiss_index = faiss.read_index(os.path.join(index_dir, "faiss.index"))
-        self.embed_model = SentenceTransformer("keepitreal/vietnamese-sbert")
+
+        # Đổi sang model mới khớp với build_index
+        self.embed_model = SentenceTransformer("AITeamVN/Vietnamese_Embedding_v2")
         self.reranker    = CrossEncoder("cross-encoder/mmarco-mMiniLMv2-L12-H384-v1")
         print("DocAgent: Sẵn sàng.")
 
@@ -52,6 +65,46 @@ class DocAgent:
             return f"{question} {option_content}"
         return f"{question} {note}"
 
+    def _bm25_search(self, query: str, top_k: int = 15) -> list:
+        "BM25 qua SQLite FTS5."
+        try:
+            conn = sqlite3.connect(self.bm25_db)
+            cur = conn.cursor()
+            # FTS5 MATCH — escape dấu ngoặc kép trong query
+            safe_q = query.replace('"', '""')
+            cur.execute(
+                f'SELECT chunk_id FROM bm25_chunks WHERE chunk_text MATCH ? ORDER BY rank LIMIT ?',
+                (f'"{safe_q}"', top_k),
+            )
+            rows = cur.fetchall()
+            conn.close()
+            results = []
+            for (chunk_id,) in rows:
+                if chunk_id in self.store:
+                    results.append(self.store[chunk_id]["content"])
+            return results
+        except Exception:
+            # Fallback: FTS5 MATCH lỗi với query phức tạp → tìm từng từ
+            try:
+                conn = sqlite3.connect(self.bm25_db)
+                cur = conn.cursor()
+                words = re.findall(r'\w+', query)[:5]
+                match_q = " OR ".join(words)
+                cur.execute(
+                    f'SELECT chunk_id FROM bm25_chunks WHERE chunk_text MATCH ? ORDER BY rank LIMIT ?',
+                    (match_q, top_k),
+                )
+                rows = cur.fetchall()
+                conn.close()
+                results = []
+                for (chunk_id,) in rows:
+                    if chunk_id in self.store:
+                        results.append(self.store[chunk_id]["content"])
+                return results
+            except Exception:
+                return []
+
+
     def retrieve_and_rerank(
         self,
         question: str,
@@ -60,20 +113,16 @@ class DocAgent:
         top_k_rerank: int = 5,
     ) -> str:
         note_str = str(note).strip()
-
-        # Query chính: question + option texts
         main_query = self._build_search_query(question, note_str)
 
         # FAISS semantic search
         q_emb = self.embed_model.encode([main_query], convert_to_numpy=True)
         faiss.normalize_L2(q_emb)
         _, faiss_idx = self.faiss_index.search(q_emb, top_k_retrieve)
-        faiss_results = [self.chunks[i] for i in faiss_idx[0] if i < len(self.chunks)]
+        faiss_results = [self.chunks[i] for i in faiss_idx[0] if 0 <= i < len(self.chunks)]
 
-        # BM25 keyword search
-        bm25_scores = self.bm25.get_scores(self._tok(main_query))
-        bm25_idx    = np.argsort(bm25_scores)[::-1][:top_k_retrieve]
-        bm25_results = [self.chunks[i] for i in bm25_idx if bm25_scores[i] > 0]
+        # BM25 qua SQLite FTS5
+        bm25_results = self._bm25_search(main_query, top_k_retrieve)
 
         # Search thêm bằng question thuần nếu có note
         note_results = []
@@ -81,9 +130,9 @@ class DocAgent:
             n_emb = self.embed_model.encode([question], convert_to_numpy=True)
             faiss.normalize_L2(n_emb)
             _, n_idx = self.faiss_index.search(n_emb, 5)
-            note_results = [self.chunks[i] for i in n_idx[0] if i < len(self.chunks)]
+            note_results = [self.chunks[i] for i in n_idx[0] if 0 <= i < len(self.chunks)]
 
-        seen: set  = set()
+        seen: set = set()
         combined: list = []
         for chunk in note_results + faiss_results + bm25_results:
             key = chunk[:80]
@@ -95,8 +144,7 @@ class DocAgent:
             return ""
 
         combined = combined[:25]
-        # Rerank dùng question gốc để reranker chính xác hơn
-        scores    = self.reranker.predict([[question, c] for c in combined])
+        scores = self.reranker.predict([[question, c] for c in combined])
         top_chunks = [
             c for _, c in sorted(zip(scores, combined), reverse=True)[:top_k_rerank]
         ]
