@@ -109,7 +109,7 @@ class DocAgent:
             _, n_idx     = self.faiss_index.search(n_emb, 5)
             note_results = [self.chunks[i] for i in n_idx[0] if 0 <= i < len(self.chunks)]
 
-        seen: set     = set()
+        seen: set      = set()
         combined: list = []
         for chunk in note_results + faiss_results + bm25_results:
             key = chunk[:80]
@@ -120,9 +120,9 @@ class DocAgent:
         if not combined:
             return ""
 
-        # Giữ nguyên CrossEncoder 25 pairs — không thay đổi
-        combined = combined[:25]
-        scores   = self.reranker.predict([[question, c] for c in combined])
+        # 25 → 8 pairs 
+        combined   = combined[:8]
+        scores     = self.reranker.predict([[question, c] for c in combined])
         top_chunks = [
             c for _, c in sorted(zip(scores, combined), reverse=True)[:top_k_rerank]
         ]
@@ -169,12 +169,7 @@ class DocAgent:
 
         return None, None
 
-    # Think then Answer — tách suy luận ra khỏi output 
-    #
-    # Thay vì: 1 prompt dài → LLM vừa suy luận vừa ghi → max_tokens=300
-    # Thành:   Call 1: LLM đọc context + câu hỏi → chỉ trả 1–2 chữ cái → max_tokens=10
-    #          Call 2: chỉ khi fail parse → JSON prompt ngắn → max_tokens=20
-
+    # Think then Answer 
     _ANSWER_PROMPT = """{fewshot}Dựa vào tài liệu, chọn đáp án đúng cho câu hỏi trắc nghiệm.
 Có thể có 1 hoặc nhiều đáp án đúng.
 
@@ -206,7 +201,7 @@ JSON:"""
         if self.fewshot is not None:
             fewshot_block = self.fewshot.get_doc_fewshot(question)
 
-        # Call 1: chỉ trả chữ cái → max_tokens=10
+        # Call 1: chỉ trả chữ cái → max_tokens=10 
         prompt1 = self._ANSWER_PROMPT.format(
             fewshot=fewshot_block,
             context=ctx_short,
@@ -221,13 +216,13 @@ JSON:"""
                 ensure_ascii=False,
             )
 
-        # Call 2 (fallback): JSON trực tiếp → max_tokens=20
+        # Call 2 (fallback): JSON ngắn → max_tokens=20
         prompt2 = self._JSON_FALLBACK_PROMPT.format(
             question=full_question,
             context=context[:800],
         )
-        raw2    = self.llm.generate(prompt2, max_tokens=20)
-        n2, r2  = self._parse_output(raw2)
+        raw2   = self.llm.generate(prompt2, max_tokens=20)
+        n2, r2 = self._parse_output(raw2)
         if r2:
             return json.dumps({"numbers": n2, "result": r2}, ensure_ascii=False)
 
