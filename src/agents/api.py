@@ -5,447 +5,594 @@ import calendar
 
 class APIAgent:
 
-
     def __init__(self, llm_service, retriever, fewshot_loader=None):
         self.llm       = llm_service
         self.retriever = retriever
         self.fewshot   = fewshot_loader
 
-    # DATE EXTRACTION
+    # DATE EXTRACTION 
 
-    def _extract_dates(self, question: str) -> tuple[str, str]:
+    def _ms(self, yr, mo):
+        mo = max(1, min(12, mo))
+        return f"{yr}-{mo:02d}-01"
+
+    def _me(self, yr, mo):
+        mo = max(1, min(12, mo))
+        return f"{yr}-{mo:02d}-{calendar.monthrange(yr, mo)[1]}"
+
+    def _extract_dates(self, question):
         q = question.lower()
         m = re.search(
             r"(?:tháng|t)\s*(\d{1,2})[/\-](\d{4})\s*(?:-|->|đến|~)\s*"
-            r"(?:tháng|t)?\s*(\d{1,2})[/\-](\d{4})", q,
-        )
+            r"(?:tháng|t)?\s*(\d{1,2})[/\-](\d{4})", q)
         if m:
-            m1, y1, m2, y2 = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
-            return self._ms(y1, m1), self._me(y2, m2)
-
+            return (self._ms(int(m.group(2)), int(m.group(1))),
+                    self._me(int(m.group(4)), int(m.group(3))))
         m = re.search(r"tháng\s*(\d{1,2})[/\-](20\d{2})", q)
         if m:
             mo, yr = int(m.group(1)), int(m.group(2))
             return self._ms(yr, mo), self._me(yr, mo)
-
         m = re.search(r"\bt(\d{1,2})[/\-](20\d{2})\b", q)
         if m:
             mo, yr = int(m.group(1)), int(m.group(2))
             return self._ms(yr, mo), self._me(yr, mo)
-
         m = re.search(r"(?:quý|q)\s*([1-4])[/\-\s](20\d{2})", q)
         if m:
             qtr, yr = int(m.group(1)), int(m.group(2))
             sm = (qtr - 1) * 3 + 1
             return self._ms(yr, sm), self._me(yr, sm + 2)
-
         m = re.search(r"(?:năm|year)\s*(20\d{2})", q)
         if m:
             yr = int(m.group(1))
             return f"{yr}-01-01", f"{yr}-12-31"
-
         m = re.search(r"\b(20\d{2})\b", q)
         if m:
             yr = int(m.group(1))
             return f"{yr}-01-01", f"{yr}-12-31"
-
         return "", ""
 
-    def _ms(self, yr: int, mo: int) -> str:
-        mo = max(1, min(12, mo))
-        return f"{yr}-{mo:02d}-01"
+    # ALIAS MAPS: từ Doc_alias_for_contest 
+    # value lấy từ file alias
 
-    def _me(self, yr: int, mo: int) -> str:
-        mo = max(1, min(12, mo))
-        return f"{yr}-{mo:02d}-{calendar.monthrange(yr, mo)[1]}"
+    # organization: từ alias sheet (thêm TTCN)
+    ORG_MAP = {
+        "trung tâm phần mềm quản trị":    "TTPMQT",
+        "trung tâm phần mềm viễn thông":  "TTPMVT",
+        "trung tâm phần mềm tài chính số":"TTPMTCS",
+        "trung tâm phần mềm công nghệ mới":"TTPMCNM",
+        "trung tâm phần mềm chuyển đổi số":"TTPMCDS",
+        "trung tâm công nghệ đặc thù":    "TTCNDT",
+        "trung tâm công nghệ":             "TTCN",
+        # Alias ngắn
+        "ttpmqt":  "TTPMQT",  "ttpmvt":  "TTPMVT",  "ttpmtcs": "TTPMTCS",
+        "ttpmcnm": "TTPMCNM", "ttpmcds": "TTPMCDS",  "ttcndt":  "TTCNDT",
+        "ttcnđt":  "TTCNDT",  "ttcn":    "TTCN",
+        "pm qt":   "TTPMQT",  "pm vt":   "TTPMVT",   "pm tcs":  "TTPMTCS",
+        "pm cnm":  "TTPMCNM", "pm cds":  "TTPMCDS",
+        "ttpmcđs": "TTPMCDS",
+    }
 
-    # EXTRACT HELPERS
+    # orgAlias: phòng ban KD (từ alias sheet)
+    ORG_ALIAS_MAP = {
+        "đầu tư pháp chế": "DTPC", "dtpc": "DTPC",
+        "hỗ trợ kinh doanh": "HTKD", "htkd": "HTKD",
+        "kinh doanh giải pháp doanh nghiệp": "KDGPDN", "kdgpdn": "KDGPDN",
+        "kinh doanh quốc tế": "KDQT", "kdqt": "KDQT",
+        "kinh doanh viễn thông": "KDVTCNM", "kdvtcnm": "KDVTCNM",
+    }
 
-    def _extract_type(self, question: str) -> int:
+    # projectType: value từ alias sheet
+    PROJECT_TYPE_MAP = {
+        "t&m": "T&M", "time and material": "T&M",
+        "presales": "presales", "presale": "presales",
+        "package": "package", "gói": "package",
+        "odc/osdc": "odc/osdc", "osdc": "odc/osdc", "odc": "odc/osdc",
+    }
+
+    # projectStatus: value từ alias sheet (chú ý "Hoàn thành" -> hold)
+    PROJECT_STATUS_MAP = {
+        "presale": "presale",       "tiền bán hàng": "presale",
+        "in-progress": "in-progress", "đang thực hiện": "in-progress",
+        "trong tiến trình": "in-progress",
+        "closed": "closed",         "đã đóng": "closed", "kết thúc": "closed",
+        "open": "open",             "đang mở": "open",
+        "hold": "hold",             "hoàn thành": "hold", "tạm dừng": "hold",
+    }
+
+    # position: value từ alias sheet (thêm VHKT, DATA, AI)
+    POSITION_MAP = {
+        "developer": "DEV",    "dev": "DEV",
+        "business analyst": "BA", "ba": "BA",
+        "ui/ux designer": "UIUX", "uiux": "UIUX",
+        "project manager": "PM",  "pm": "PM",
+        "tester": "TESTER",    "qa": "TESTER",
+        "ai engineer": "AI",   "ai": "AI",
+        "data analyst": "DATA", "data": "DATA",
+        "vhkt": "VHKT",
+    }
+
+    # level: value từ alias sheet (F/J/J+/M/M+/S — không phải Fresher/Junior)
+    LEVEL_MAP = {
+        "fresher": "F",  "f": "F",
+        "junior+": "J+", "junior": "J", "j+": "J+", "j": "J",
+        "middle+": "M+", "middle": "M", "m+": "M+", "m": "M",
+        "senior": "S",   "s": "S",
+        "đang cập nhật": "Đang Cập Nhật",
+    }
+
+    # lcntOption: value là SỐ (1,2,3) — không phải text
+    LCNT_OPTION_MAP = {
+        "1 giai đoạn 1 túi": 1,
+        "1 giai đoạn 2 túi": 2,
+        "2 giai đoạn 2 túi": 3,
+    }
+
+    # lcntOptionDoing: value là SỐ
+    LCNT_OPTION_DOING_MAP = {
+        "đấu thầu không qua mạng": 1,
+        "đấu thầu qua mạng":       2,
+    }
+
+    # bidPlanType: value là SỐ (1=Trong nước, 2=Quốc tế)
+    BID_PLAN_TYPE_MAP = {
+        "trong nước": 1, "nội địa": 1,
+        "quốc tế":    2, "international": 2,
+    }
+
+    # lcntType: value là SỐ
+    LCNT_TYPE_MAP = {
+        "đầu tư rời rạc":      1,
+        "đấu thầu hạn chế":    2,
+        "mua sắm tập trung":   3,
+        "chào hàng cạnh tranh":4,
+        "chủ đầu tư":          5,
+        "tự thực hiện":        6,
+        "hình thức đặc biệt":  7,
+    }
+
+    # lcntDomainType: value là SỐ
+    LCNT_DOMAIN_TYPE_MAP = {
+        "mua sắm hàng hóa": 1,
+        "xây lắp":          2,
+        "tư vấn":           3,
+        "phi tư vấn":       4,
+        "hỗn hợp":          5,
+    }
+
+    # gtStatus: value là SỐ
+    GT_STATUS_MAP = {
+        "đã duyệt kế hoạch lựa chọn nhà thầu":          3,
+        "đã duyệt kết quả lựa chọn nhà thầu":           4,
+        "chờ mở thầu":                                   5,
+        "đã hủy kết quả lựa chọn nhà thầu":             14,
+        "đã hủy kế hoạch lựa chọn nhà thầu":            15,
+        "đã đóng thầu":                                  7,
+        "đã hủy trình ký kết quả lựa chọn nhà thầu":    11,
+        "đã báo cáo đánh giá hồ sơ dự thầu":            8,
+    }
+
+    # hdStatus: value là SỐ
+    HD_STATUS_MAP = {
+        "chưa ký":      0,
+        "đã ký":        1,
+        "đang thực hiện": 2,
+        "đã thanh lý":  3,
+    }
+
+    # isProbation: từ alias (Đã duyệt=1, Chưa duyệt=0)
+
+    # assetGroup: value từ alias (một số khác key)
+    ASSET_GROUP_MAP = {
+        "thiết bị văn phòng":                     "TBVP",
+        "tbvp":                                   "TBVP",
+        "tài sản phục vụ sản xuất kinh doanh":    "Tài sản phục vụ sản xuất kinh doanh",
+        "tài sản cố định":                        "Tài sản cố định",
+        "dịch vụ khác":                           "Dịch vụ khác",
+        "dịch vụ công nghệ thông tin":            "Dịch vụ CNTT",
+        "dịch vụ cntt":                           "Dịch vụ CNTT",
+        "công cụ dụng cụ":                        "Công cụ dụng cụ",
+    }
+
+    # dtmsClass: value từ alias
+    DTMS_CLASS_MAP = {
+        "đầu tư hỗ trợ phát triển khoa học công nghệ":  "Dự án Đầu tư hỗ trợ phát triển KHCN",
+        "đầu tư mua sắm tài sản":   "Dự án Đầu tư Mua sắm tài sản",
+        "đầu tư phát triển":        "Dự án Đầu tư phát triển",
+        "đầu tư xây dựng":          "Dự án Đầu tư xây dựng",
+        "mua sắm bảo đảm liên tục": "Mua sắm nhằm bảo đảm tính liên tục cho hoạt động SXKD",
+        "mua sắm duy trì thường xuyên": "Mua sắm nhằm duy trì hoạt động thường xuyên của Công ty",
+    }
+
+    # dtmsType: value từ alias
+    DTMS_TYPE_MAP = {
+        "công nghệ thông tin": "CNTT", "cntt": "CNTT",
+        "nghiên cứu sản xuất": "NCSX", "ncsx": "NCSX",
+        "vật tư": "Vật tư",
+        "xây dựng dân dụng": "XDDD-Khác", "xddd": "XDDD-Khác",
+    }
+
+    # procurementType: value từ alias (SỐ dạng string "1"/"0")
+    PROCUREMENT_TYPE_MAP = {
+        "hình thành gói thầu":       "1",
+        "không hình thành gói thầu": "0",
+    }
+
+    # trainGroup: value từ alias
+    TRAIN_GROUP_MAP = {
+        "chứng chỉ chuyên môn":             "Chứng chỉ chuyên môn",
+        "chuyên môn nghiệp vụ":             "Đào tạo chuyên môn, nghiệp vụ",
+        "hội nhập":                         "Đào tạo hội nhập",
+        "năng lực cốt lõi":                 "Đào tạo năng lực cốt lõi, tuân thủ",
+        "năng lực lãnh đạo":                "Đào tạo năng lực lãnh đạo, quản lý",
+        "tiếng anh":                        "Đào tạo tiếng anh",
+        "thực tập sinh":                    "Thực tập sinh",
+    }
+
+    # priorityList: value = key (same)
+    PRIORITY_MAP = {
+        "highest": "Highest", "high": "High",
+        "medium": "Medium",   "low": "Low", "lowest": "Lowest",
+        "cao nhất": "Highest", "cao": "High",
+        "trung bình": "Medium", "thấp": "Low", "thấp nhất": "Lowest",
+    }
+
+    # TARGET_CODE cho KD/TC APIs
+    TARGET_CODE_MAP = {
+        "doanh thu thuần":            "DT",
+        "doanh thu dịch vụ":          "DT",
+        "doanh thu":                  "DT",
+        "sản lượng nghiệm thu":       "SLNT",
+        "slnt":                       "SLNT",
+        "giá trị hợp đồng ký mới":   "GTHĐKM",
+        "hợp đồng ký mới":           "GTHĐKM",
+        "lợi nhuận gộp":             "LNG",
+        "lợi nhuận":                 "LNG",
+    }
+
+    # EXTRACT HELPERS 
+
+    def _extract_list(self, question: str, mapping: dict) -> list:
+        """Tìm tất cả values trong mapping xuất hiện trong câu hỏi."""
         q = question.lower()
-        if re.search(r"trong năm|cả năm|theo năm|\bnăm 20\d{2}\b", q):
-            return 5
-        if re.search(r"quý|quarter", q):
-            return 4
-        return 3
+        found, seen = [], set()
+        # Sort by key length giảm dần để match dài nhất trước
+        for kw in sorted(mapping, key=len, reverse=True):
+            if kw in q and mapping[kw] not in seen:
+                found.append(mapping[kw])
+                seen.add(mapping[kw])
+        return found
+
+    def _extract_orgs(self, question: str) -> list:
+        return self._extract_list(question, self.ORG_MAP)
+
+    def _extract_org_alias(self, question: str) -> list:
+        return self._extract_list(question, self.ORG_ALIAS_MAP)
+
+    def _extract_type_from_desc(self, question: str, desc: str, example_val=None) -> int:
+        """
+        Trích xuất type dựa vào description của param + nội dung câu hỏi.
+        Ưu tiên: mapping tường minh trong desc > example_call > fallback.
+        """
+        q = question.lower()
+        d = desc.lower()
+
+        has_year    = bool(re.search(r"(?:trong\s+)?năm\s+20\d{2}|cả\s+năm|theo\s+năm", q))
+        has_quarter = bool(re.search(r"quý|q[1-4]", q))
+        has_month   = bool(re.search(r"tháng|\bt\d{1,2}[/\-]", q))
+        has_range   = bool(re.search(r"t\d{1,2}[/\-]20\d{2}\s*(?:-|->|~|đến)\s*t?\d", q))
+
+        # Tìm mapping tường minh: "năm -> 5", "quý -> 4", "tháng -> 3"
+        explicit = {}
+        for pat, key in [
+            (r"năm\s*(?:->|trả về|return)\s*(\d)", "year"),
+            (r"quý\s*(?:->|trả về|return)\s*(\d)", "quarter"),
+            (r"tháng\s*(?:->|trả về|return)\s*(\d)", "month"),
+            (r"tuần\s*(?:->|trả về|return)\s*(\d)", "week"),
+        ]:
+            m = re.search(pat, d)
+            if m:
+                explicit[key] = int(m.group(1))
+
+        if explicit:
+            if has_year    and "year"    in explicit: return explicit["year"]
+            if has_quarter and "quarter" in explicit: return explicit["quarter"]
+            if (has_month or has_range) and "month" in explicit: return explicit["month"]
+            if example_val is not None: return int(example_val)
+            return list(explicit.values())[0]
+
+        # Không có mapping tường minh -> dùng example_call làm default
+        if example_val is not None:
+            default = int(example_val)
+        else:
+            default = 3  # MONTH
+
+        # Chỉ override khi example chưa set (None hoặc 1)
+        if example_val is None or int(example_val) == 1:
+            if has_year:    return 5
+            if has_quarter: return 4
+            if has_month or has_range: return 3
+
+        return default
 
     def _extract_sort(self, question: str) -> int | None:
         q = question.lower()
-        if re.search(r"tăng dần|ascending|asc", q):
-            return 1
-        if re.search(r"giảm dần|descending|desc", q):
-            return 2
+        if re.search(r"tăng dần|ascending", q): return 1
+        if re.search(r"giảm dần|descending", q): return 2
         return None
 
-    def _extract_standard_comparison(self, question: str) -> int | None:
-        q = question.lower()
-        if re.search(r"(cao hơn|trên|vượt|đạt|bằng hoặc cao hơn)\s*(chuẩn|tiêu chuẩn|kpi|sla)", q):
-            return 1
-        if re.search(r"(thấp hơn|dưới|không đạt)\s*(chuẩn|tiêu chuẩn|kpi|sla)", q):
-            return 2
-        return None
-
-    def _extract_summary_date(self, question: str) -> str:
-        _, to_date = self._extract_dates(question)
-        return to_date if to_date else ""
-
-    def _extract_org_code(self, question: str) -> str:
-        q = question.lower()
-        for alias, canon in self.ORG_CODE_MAP.items():
-            if alias in q:
-                return canon
-        return "VTIT"
-
-    # ENUM MAPS
-
-    ORG_ALIASES = {
-        "ttpmqt":   "TTPMQT",  "ttpmtcs":  "TTPMTCS", "ttpmvt":   "TTPMVT",
-        "ttpmcnm":  "TTPMCNM", "ttpmcds":  "TTPMCDS", "ttcndt":   "TTCNDT",
-        "ttcnđt":   "TTCNDT",  "tt cnđt":  "TTCNDT",
-        "pm qt":    "TTPMQT",  "pm tcs":   "TTPMTCS", "pm vt":    "TTPMVT",
-        "pm cnm":   "TTPMCNM", "pm cds":   "TTPMCDS",
-        # Thêm từ f2
-        "ttpmcđs":  "TTPMCDS", "tt pmcds": "TTPMCDS",
-        "tt pmvt":  "TTPMVT",  "tt pmqt":  "TTPMQT",
-        "tt pmtcs": "TTPMTCS", "tt pmcnm": "TTPMCNM",
-        "trung tâm pm qt":  "TTPMQT",
-        "trung tâm pm tcs": "TTPMTCS",
-        "trung tâm pm vt":  "TTPMVT",
-        "trung tâm pm cnm": "TTPMCNM",
-        "trung tâm pm cds": "TTPMCDS",
-        "trung tâm cnđt":   "TTCNDT",
-    }
-
-    ORG_CODE_MAP = {
-        "ttpmqt":   "TTPMQT",  "ttpmtcs":  "TTPMTCS", "ttpmvt":   "TTPMVT",
-        "ttpmcnm":  "TTPMCNM", "ttpmcds":  "TTPMCDS", "ttcndt":   "TTCNDT",
-        "ttcnđt":   "TTCNDT",  "ttpmcđs":  "TTPMCDS", "vtit":     "VTIT",
-    }
-
-    PROJECT_TYPE_MAP = {
-        "package":           "Package",  "gói":               "Package",
-        "osdc":              "osdc",     "odc/osdc":          "odc/osdc",
-        "odc":               "odc",      "t&m":               "T&M",
-        "time and material": "T&M",      "presale":           "presales",
-        "presales":          "presales",
-    }
-
-
-    PROJECT_STATUS_MAP = {
-        "in-progress": "in-progress", "đang thực hiện": "in-progress",
-        "hold":        "hold",        "tạm dừng":        "hold",
-        "closed":      "closed",      "đóng":            "closed",
-        "kết thúc":    "closed",      "open":            "open",
-        "mở":          "open",
-    }
-
-    ASSET_GROUP_MAP = {
-        "dịch vụ cntt":     "Dịch vụ CNTT",
-        "công cụ dụng cụ":  "Công cụ dụng cụ",
-        "máy móc thiết bị": "Máy móc thiết bị",
-        "phần mềm":         "Phần mềm",
-        "tài sản cố định":  "Tài sản cố định",
-    }
-
-    LCNT_OPTION_MAP = {
-        "đtrr": "ĐTRR", "mstt": "MSTT", "chlt": "CHLT",
-        "chlc": "CHLC", "đthc": "ĐTHC",
-    }
-
-    LCNT_TYPE_MAP = {
-        "đtrr": "ĐTRR", "mstt": "MSTT", "chlt": "CHLT",
-        "chlc": "CHLC", "đthc": "ĐTHC",
-    }
-
-    BID_PLAN_TYPE_MAP = {
-        "đấu thầu không qua mạng": "Đấu thầu không qua mạng",
-        "đấu thầu qua mạng":       "Đấu thầu qua mạng",
-        "chỉ định thầu":           "Chỉ định thầu",
-        "mua sắm trực tiếp":       "Mua sắm trực tiếp",
-        "tự thực hiện":            "Tự thực hiện",
-    }
-
-    # TARGET CODE MAP: dành cho GET APIs KD/TC
-    TARGET_CODE_MAP = {
-        "doanh thu":            "DT",
-        "doanh thu dịch vụ":    "DT",
-        "doanh thu thuần":      "DT",
-        "slnt":                 "SLNT",
-        "sản lượng nghiệm thu": "SLNT",
-        "giá trị hợp đồng":     "GTHĐKM",
-        "hợp đồng ký mới":      "GTHĐKM",
-        "lợi nhuận gộp":        "LNG",
-        "lợi nhuận":            "LNG",
-    }
-
-    def _extract_orgs(self, question: str) -> list[str]:
-        q = question.lower()
-        if re.search(r"cả\s+công\s+ty|toàn\s+công\s+ty|tất cả", q):
-            return []
-        found, seen = [], set()
-        for alias, canon in self.ORG_ALIASES.items():
-            if alias in q and canon not in seen:
-                found.append(canon)
-                seen.add(canon)
-        return found
-
-    def _extract_enum(self, question: str, mapping: dict) -> list[str]:
-        q = question.lower()
-        found, seen = [], set()
-        for kw, val in mapping.items():
-            if kw in q and val not in seen:
-                found.append(val)
-                seen.add(val)
-        return found
-
-    def _extract_target_code(self, question: str, default: str = "DT") -> str:
-        q = question.lower()
-        for kw, code in self.TARGET_CODE_MAP.items():
-            if kw in q:
-                return code
-        return default
-
-    # LLM: CHỌN API + EXTRACT PARAMS
-
-    _SELECT_AND_BODY_PROMPT = (
-        "{fewshot}"
-        "Dựa vào câu hỏi, hãy:\n"
-        "1. Chọn API phù hợp nhất từ danh sách\n"
-        "2. Điền các tham số body dựa trên thông tin trong câu hỏi\n"
-        "   Lưu ý: Nếu câu hỏi không đề cập đến tham số nào thì để []/null theo mô tả\n\n"
-        "[DANH SÁCH API]:\n{api_list}\n\n"
-        "[CÂU HỎI]: {question}\n\n"
-        "Chỉ trả về JSON theo đúng format sau, không giải thích:\n"
-        "{{\n"
-        "  \"func_code\": \"<func_code của API phù hợp nhất>\",\n"
-        "  \"body_params\": {{\n"
-        "    \"<tên param>\": <giá trị>\n"
-        "  }}\n"
-        "}}\n"
-        "JSON:"
-    )
-
-    def _select_and_extract_params(self, question: str, top_df) -> tuple[str | None, dict]:
-        api_list_str = "\n---\n".join(
-            f"func_code: {row['func_code']}\n"
-            f"Mô tả: {row.get('description', '')[:200]}\n"
-            f"Ví dụ: {str(row.get('Example question', ''))[:150]}"
-            for _, row in top_df.iterrows()
-        )
-
-        fewshot_block = ""
-        if self.fewshot is not None:
-            fewshot_block = self.fewshot.get_api_fewshot(question)
-
-        prompt = self._SELECT_AND_BODY_PROMPT.format(
-            fewshot=fewshot_block,
-            api_list=api_list_str,
-            question=question,
-        )
-        raw = self.llm.generate(prompt, max_tokens=200).strip()  # giảm 250→200
-
-        selected_fc = None
-        llm_params  = {}
+    def _get_example_body(self, cfg: dict) -> dict:
+        ex = cfg.get("example_call", [])
+        if not ex: return {}
+        raw = ex[0].get("body", "{}")
+        if isinstance(raw, dict): return raw
         try:
-            # f2 fix: dùng raw_decode thay vì regex để parse JSON chính xác hơn
-            decoder = json.JSONDecoder()
-            start   = raw.find('{')
-            if start != -1:
-                obj, _  = decoder.raw_decode(raw, start)
-                fc_raw  = obj.get("func_code", "")
-                for fc in top_df["func_code"].tolist():
-                    if fc.lower() in fc_raw.lower():
-                        selected_fc = fc
-                        break
-                if selected_fc is None:
-                    fc_clean = re.sub(r"\s+", "", fc_raw).lower()
-                    for fc in top_df["func_code"].tolist():
-                        if re.sub(r"\s+", "", fc).lower() in fc_clean:
-                            selected_fc = fc
-                            break
-                # f2 fix: or {} để tránh crash khi LLM trả None
-                llm_params = obj.get("body_params", {}) or {}
-        except Exception as e:
-            print(f"⚠️ LLM select+extract lỗi: {e}")
-            for fc in top_df["func_code"].tolist():
-                if fc.lower() in raw.lower():
-                    selected_fc = fc
-                    break
-
-        return selected_fc, llm_params
-
-    # BODY BUILDER
-
-    def _build_body(
-        self,
-        question: str,
-        endpoint_config_str: str,
-        llm_params: dict = None,
-    ) -> dict:
-        try:
-            cfg = json.loads(endpoint_config_str)
+            return json.loads(raw) or {}
         except Exception:
             return {}
 
-        all_params     = cfg.get("required_params", []) + cfg.get("optional_params", [])
+    def _build_body(self, question: str, cfg: dict) -> dict:
+        all_params   = cfg.get("required_params", []) + cfg.get("optional_params", [])
+        example_body = self._get_example_body(cfg)
         from_date, to_date = self._extract_dates(question)
-        orgs           = self._extract_orgs(question)
-        proj_types     = self._extract_enum(question, self.PROJECT_TYPE_MAP)
-        proj_status    = self._extract_enum(question, self.PROJECT_STATUS_MAP)
-        asset_groups   = self._extract_enum(question, self.ASSET_GROUP_MAP)
-        lcnt_options   = self._extract_enum(question, self.LCNT_OPTION_MAP)
-        lcnt_types     = self._extract_enum(question, self.LCNT_TYPE_MAP)
-        bid_plan_types = self._extract_enum(question, self.BID_PLAN_TYPE_MAP)
-        type_val       = self._extract_type(question)
-        sort_val       = self._extract_sort(question)
-        std_comp       = self._extract_standard_comparison(question)
-        org_code       = self._extract_org_code(question)
-        summary_date   = self._extract_summary_date(question)
+        orgs         = self._extract_orgs(question)
+        org_aliases  = self._extract_org_alias(question)
+        proj_types   = self._extract_list(question, self.PROJECT_TYPE_MAP)
+        proj_status  = self._extract_list(question, self.PROJECT_STATUS_MAP)
+        positions    = self._extract_list(question, self.POSITION_MAP)
+        levels       = self._extract_list(question, self.LEVEL_MAP)
+        asset_groups = self._extract_list(question, self.ASSET_GROUP_MAP)
+        dtms_class   = self._extract_list(question, self.DTMS_CLASS_MAP)
+        dtms_type    = self._extract_list(question, self.DTMS_TYPE_MAP)
+        lcnt_option  = self._extract_list(question, self.LCNT_OPTION_MAP)
+        lcnt_doing   = self._extract_list(question, self.LCNT_OPTION_DOING_MAP)
+        bid_plan     = self._extract_list(question, self.BID_PLAN_TYPE_MAP)
+        lcnt_type    = self._extract_list(question, self.LCNT_TYPE_MAP)
+        lcnt_domain  = self._extract_list(question, self.LCNT_DOMAIN_TYPE_MAP)
+        gt_status    = self._extract_list(question, self.GT_STATUS_MAP)
+        hd_status    = self._extract_list(question, self.HD_STATUS_MAP)
+        procurement  = self._extract_list(question, self.PROCUREMENT_TYPE_MAP)
+        train_group  = self._extract_list(question, self.TRAIN_GROUP_MAP)
+        priority     = self._extract_list(question, self.PRIORITY_MAP)
 
+        q_lower = question.lower()
         body = {}
+
         for p in all_params:
             name  = p.get("name", "")
             ptype = p.get("type", "")
+            pdesc = p.get("description", "")
 
             if name in ("fromDate", "from_date", "startDate"):
                 body[name] = from_date
             elif name in ("toDate", "to_date", "endDate"):
                 body[name] = to_date
-            elif name in ("organization", "org"):
+
+            elif name == "organization":
                 body[name] = orgs
             elif name == "orgAlias":
-                body[name] = orgs
-            elif name == "organizationCode":
-                body[name] = org_code
+                body[name] = org_aliases if org_aliases else orgs
+
             elif name == "projectType":
                 body[name] = proj_types
             elif name == "projectStatus":
                 body[name] = proj_status
+            elif name == "position":
+                body[name] = positions
+            elif name == "level":
+                body[name] = levels
             elif name == "assetGroup":
                 body[name] = asset_groups
+            elif name == "dtmsClass":
+                body[name] = dtms_class
+            elif name == "dtmsType":
+                body[name] = dtms_type
             elif name == "lcntOption":
-                body[name] = lcnt_options
+                body[name] = lcnt_option
             elif name == "lcntOptionDoing":
-                body[name] = lcnt_options
-            elif name == "lcntType":
-                body[name] = lcnt_types
+                body[name] = lcnt_doing
             elif name == "bidPlanType":
-                body[name] = bid_plan_types
+                body[name] = bid_plan
+            elif name == "lcntType":
+                body[name] = lcnt_type
+            elif name == "lcntDomainType":
+                body[name] = lcnt_domain
+            elif name == "gtStatus":
+                body[name] = gt_status
+            elif name == "hdStatus":
+                body[name] = hd_status
+            elif name == "procurementType":
+                body[name] = procurement
+            elif name == "trainGroup":
+                body[name] = train_group
+            elif name == "priorityList":
+                body[name] = priority
+            elif name == "assigneeList":
+                body[name] = []
+
+            elif name == "type":
+                ex_type = example_body.get("type")
+                body[name] = self._extract_type_from_desc(question, pdesc, ex_type)
+
+            elif name == "sort":
+                sv = self._extract_sort(question)
+                ex_sort = example_body.get("sort")
+                body[name] = sv if sv is not None else ex_sort
+
             elif name == "isCompany":
-                body[name] = not bool(orgs)
+                has_company_kw = bool(re.search(r"cả\s+công\s+ty|toàn\s+công\s+ty", q_lower))
+                body[name] = has_company_kw or not bool(orgs)
+
             elif name == "isAllProject":
                 body[name] = True
-            elif name == "IsAllCustomer":
-                body[name] = True
-            elif name == "type":
-                body[name] = type_val
-            elif name == "sort":
-                body[name] = sort_val if sort_val is not None else 2
-            elif name == "standardComparison":
-                body[name] = std_comp
-            elif name == "summaryDate":
-                body[name] = summary_date
+
+            elif name in ("IsAllCustomer", "isAllCustomer"):
+                body["isAllCustomer"] = True
+                continue
+
             elif name == "page":
                 body[name] = 0
             elif name == "size":
                 body[name] = 20
+
             elif name == "isProbation":
-                # isProbation: thực tập sinh = 1, chính thức = 0, mặc định None (lấy hết)
-                q = question.lower()
-                if re.search(r"thực tập|tts\b|probation", q):
+                # Đọc description để hiểu ngữ nghĩa đúng
+                if "thực tập" in pdesc.lower() or "probation" in pdesc.lower():
+                    if re.search(r"thực tập|tts\b|probation", q_lower):
+                        body[name] = 1
+                    elif re.search(r"chính thức|biên chế", q_lower):
+                        body[name] = 0
+                    else:
+                        body[name] = None
+                else:
+                    # isProbation theo alias: Đã duyệt=1, Chưa duyệt=0
+                    if re.search(r"đã duyệt", q_lower):
+                        body[name] = 1
+                    elif re.search(r"chưa duyệt", q_lower):
+                        body[name] = 0
+                    else:
+                        body[name] = None
+
+            elif name == "getIsProbation":
+                body[name] = bool(re.search(r"thực tập|tts\b|probation", q_lower))
+
+            elif name == "standardComparison":
+                if re.search(r"cao hơn|vượt|đạt\s+chuẩn|trên\s+chuẩn", q_lower):
                     body[name] = 1
-                elif re.search(r"chính thức|biên chế", q):
-                    body[name] = 0
+                elif re.search(r"thấp hơn|dưới\s+chuẩn|không đạt", q_lower):
+                    body[name] = 2
                 else:
                     body[name] = None
-            elif name == "getIsProbation":
-                q = question.lower()
-                body[name] = bool(re.search(r"thực tập|tts\b|probation", q))
+
+            elif name == "summaryDate":
+                _, td = self._extract_dates(question)
+                body[name] = td
+
             elif name == "targetCode":
-                # Lấy default từ path template nếu có
                 path = cfg.get("request", {}).get("path", "")
-                tc_match = re.search(r"targetCode=([A-Z]+)", path)
-                default_tc = tc_match.group(1) if tc_match else "DT"
-                body[name] = self._extract_target_code(question, default=default_tc)
+                tc_m = re.search(r"targetCode=([A-Z]+)", path)
+                default_tc = tc_m.group(1) if tc_m else "DT"
+                tc = None
+                for kw in sorted(self.TARGET_CODE_MAP, key=len, reverse=True):
+                    if kw in q_lower:
+                        tc = self.TARGET_CODE_MAP[kw]
+                        break
+                body[name] = tc or default_tc
+
             elif name == "cycleType":
-                # cycleType: month/quarter/year
-                q = question.lower()
-                if re.search(r"quý|quarter", q):
+                if re.search(r"quý|quarter", q_lower):
                     body[name] = "quarter"
-                elif re.search(r"năm|year", q):
+                elif re.search(r"năm|year", q_lower):
                     body[name] = "year"
                 else:
                     body[name] = "month"
+
+            elif name == "organizationCode":
+                # Map org name -> code
+                code = "VTIT"
+                for kw, val in self.ORG_MAP.items():
+                    if kw in q_lower:
+                        code = val
+                        break
+                body[name] = code
+
+            elif name == "customerList":
+                # Để [] nếu không match được customer cụ thể
+                body[name] = []
+
+            elif name == "projectList":
+                body[name] = []
+
+            elif name == "progressList":
+                body[name] = []
+
             elif "List" in ptype or "list" in ptype.lower():
                 body[name] = []
 
-        # Merge LLM params
-        if llm_params:
-            for k, v in llm_params.items():
-                if k in body and body[k] in ([], "", None):
-                    body[k] = v
-                elif k not in body:
-                    body[k] = v
+            elif ptype in ("Boolean", "boolean"):
+                body[name] = None
+
+        # Normalize key case
+        if "IsAllCustomer" in body:
+            body["isAllCustomer"] = body.pop("IsAllCustomer")
 
         return body
 
-    # BUILD PATH: Handle GET APIs với query params trong URL
+    # LLM: CHỈ CHỌN API với prompt ngắn 
 
-    def _build_path_with_params(self, cfg: dict, body: dict, question: str) -> str:
-        """
-        GET APIs dùng query params trong URL path.
-        Inject summary_date, org_code, target_code, cycleType vào path.
-        """
-        method = cfg.get("request", {}).get("method", "POST")
-        path   = cfg.get("request", {}).get("path", "")
+    _SELECT_PROMPT = """\
+Chọn API phù hợp nhất với câu hỏi. Chỉ trả về func_code, không giải thích.
 
-        if method != "GET":
-            return path
+[CÁC API ỨNG VIÊN]
+{api_list}
 
-        summary_date = body.get("summaryDate", "")
-        if summary_date and re.search(r"summaryDate=[\d\-]+", path):
-            path = re.sub(r"summaryDate=[\d\-]+", f"summaryDate={summary_date}", path)
+[CÂU HỎI]
+{question}
 
-        org_code = body.get("organizationCode", "VTIT")
-        if org_code and re.search(r"organizationCode=\w+", path):
-            path = re.sub(r"organizationCode=\w+", f"organizationCode={org_code}", path)
+func_code:"""
 
-        target_code = body.get("targetCode", "DT")
-        if target_code and re.search(r"targetCode=\w+", path):
-            path = re.sub(r"targetCode=\w+", f"targetCode={target_code}", path)
+    def _select_api(self, question: str, top_df) -> str | None:
+        # Build danh sách ngắn: func_code + mô tả 1 dòng + example question
+        lines = []
+        for _, row in top_df.iterrows():
+            ex_q = str(row.get("Example question", "")).split("\n")[0].strip()[:80]
+            lines.append(
+                f"- {row['func_code']}: {str(row.get('description',''))[:80]}"
+                + (f" | VD: {ex_q}" if ex_q else "")
+            )
 
-        cycle_type = body.get("cycleType", "month")
-        if cycle_type and re.search(r"cycleType=\w+", path):
-            path = re.sub(r"cycleType=\w+", f"cycleType={cycle_type}", path)
+        prompt = self._SELECT_PROMPT.format(
+            api_list="\n".join(lines),
+            question=question,
+        )
 
-        return path
+        # max_tokens=20: sinh func_code (~15-20 chars)
+        raw = self.llm.generate(prompt, max_tokens=20).strip()
 
-    # MAIN PROCESS
+        # Match func_code từ output
+        raw_clean = re.sub(r"\s+", "", raw).lower()
+        for fc in top_df["func_code"].tolist():
+            if re.sub(r"\s+", "", fc).lower() in raw_clean:
+                return fc
 
+        # Fallback: tìm bất kỳ fc nào xuất hiện trong raw
+        for fc in top_df["func_code"].tolist():
+            if fc.lower() in raw.lower():
+                return fc
+
+        # Fallback cuối: trả top-1
+        return top_df.iloc[0]["func_code"]
+
+    # MAIN 
 
     def process(self, question: str) -> str:
         top_df = self.retriever.get_top_apis_df(question, k=5)
         if top_df.empty:
             return "{}"
 
-        selected_fc, llm_params = self._select_and_extract_params(question, top_df)
-        if selected_fc is None:
-            selected_row = top_df.iloc[0]
-        else:
-            rows = top_df[top_df["func_code"] == selected_fc]
-            selected_row = rows.iloc[0] if not rows.empty else top_df.iloc[0]
+        # Bước 1: LLM chọn API (prompt ngắn, nhanh)
+        selected_fc = self._select_api(question, top_df)
+        if not selected_fc:
+            return "{}"
+
+        # Bước 2: Lấy config của API được chọn
+        rows = top_df[top_df["func_code"] == selected_fc]
+        if rows.empty:
+            rows = top_df.iloc[[0]]
+        row = rows.iloc[0]
 
         try:
-            cfg = json.loads(selected_row["Endpoint config"])
+            cfg = json.loads(row["Endpoint config"])
         except Exception:
             return "{}"
 
-        body = self._build_body(question, selected_row["Endpoint config"], llm_params=llm_params)
-
-        # GET APIs: inject params vào URL path thay vì body
-        path   = self._build_path_with_params(cfg, body, question)
+        path = cfg.get("request", {}).get("path", "")
         method = cfg.get("request", {}).get("method", "POST")
+
+        # GET API: body rỗng
         if method == "GET":
             return json.dumps({"path": path, "body": {}}, ensure_ascii=False)
+
+        # Bước 3: Rule-based điền params (không dùng LLM)
+        body = self._build_body(question, cfg)
 
         return json.dumps({"path": path, "body": body}, ensure_ascii=False)
