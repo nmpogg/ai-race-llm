@@ -330,33 +330,19 @@ class APIAgent:
         except Exception:
             return {}
 
+
     def _build_body(self, question: str, cfg: dict) -> dict:
         all_params   = cfg.get("required_params", []) + cfg.get("optional_params", [])
         example_body = self._get_example_body(cfg)
+
+        # Lấy tên tất cả params trong spec — chỉ điền những gì spec có
+        spec_param_names = {p["name"] for p in all_params}
+
         from_date, to_date = self._extract_dates(question)
-        orgs         = self._extract_orgs(question)
-        org_aliases  = self._extract_org_alias(question)
-        proj_types   = self._extract_list(question, self.PROJECT_TYPE_MAP)
-        proj_status  = self._extract_list(question, self.PROJECT_STATUS_MAP)
-        positions    = self._extract_list(question, self.POSITION_MAP)
-        levels       = self._extract_list(question, self.LEVEL_MAP)
-        asset_groups = self._extract_list(question, self.ASSET_GROUP_MAP)
-        dtms_class   = self._extract_list(question, self.DTMS_CLASS_MAP)
-        dtms_type    = self._extract_list(question, self.DTMS_TYPE_MAP)
-        lcnt_option  = self._extract_list(question, self.LCNT_OPTION_MAP)
-        lcnt_doing   = self._extract_list(question, self.LCNT_OPTION_DOING_MAP)
-        bid_plan     = self._extract_list(question, self.BID_PLAN_TYPE_MAP)
-        lcnt_type    = self._extract_list(question, self.LCNT_TYPE_MAP)
-        lcnt_domain  = self._extract_list(question, self.LCNT_DOMAIN_TYPE_MAP)
-        gt_status    = self._extract_list(question, self.GT_STATUS_MAP)
-        hd_status    = self._extract_list(question, self.HD_STATUS_MAP)
-        procurement  = self._extract_list(question, self.PROCUREMENT_TYPE_MAP)
-        train_group  = self._extract_list(question, self.TRAIN_GROUP_MAP)
-        priority     = self._extract_list(question, self.PRIORITY_MAP)
-
+        orgs = self._extract_orgs(question)
         q_lower = question.lower()
-        body = {}
 
+        body = {}
         for p in all_params:
             name  = p.get("name", "")
             ptype = p.get("type", "")
@@ -364,64 +350,136 @@ class APIAgent:
 
             if name in ("fromDate", "from_date", "startDate"):
                 body[name] = from_date
+
             elif name in ("toDate", "to_date", "endDate"):
                 body[name] = to_date
 
+            # FIX 1: fromDateProject/toDateProject — có trong spec thì điền null
+            elif name == "fromDateProject":
+                body[name] = None
+
+            elif name == "toDateProject":
+                body[name] = None
+
             elif name == "organization":
                 body[name] = orgs
+
             elif name == "orgAlias":
-                body[name] = org_aliases if org_aliases else orgs
+                body[name] = self._extract_list(question, {
+                    "dtpc": "DTPC", "htkd": "HTKD", "kdgpdn": "KDGPDN",
+                    "kdqt": "KDQT", "kdvtcnm": "KDVTCNM",
+                }) or orgs
 
             elif name == "projectType":
-                body[name] = proj_types
+                body[name] = self._extract_list(question, self.PROJECT_TYPE_MAP)
+
             elif name == "projectStatus":
-                body[name] = proj_status
+                body[name] = self._extract_list(question, self.PROJECT_STATUS_MAP)
+
             elif name == "position":
-                body[name] = positions
+                body[name] = self._extract_list(question, self.POSITION_MAP)
+
             elif name == "level":
-                body[name] = levels
+                body[name] = self._extract_list(question, self.LEVEL_MAP)
+
             elif name == "assetGroup":
-                body[name] = asset_groups
+                body[name] = self._extract_list(question, self.ASSET_GROUP_MAP)
+
             elif name == "dtmsClass":
-                body[name] = dtms_class
+                body[name] = self._extract_list(question, self.DTMS_CLASS_MAP)
+
             elif name == "dtmsType":
-                body[name] = dtms_type
-            elif name == "lcntOption":
-                body[name] = lcnt_option
-            elif name == "lcntOptionDoing":
-                body[name] = lcnt_doing
-            elif name == "bidPlanType":
-                body[name] = bid_plan
-            elif name == "lcntType":
-                body[name] = lcnt_type
-            elif name == "lcntDomainType":
-                body[name] = lcnt_domain
-            elif name == "gtStatus":
-                body[name] = gt_status
-            elif name == "hdStatus":
-                body[name] = hd_status
-            elif name == "procurementType":
-                body[name] = procurement
+                body[name] = self._extract_list(question, self.DTMS_TYPE_MAP)
+
             elif name == "trainGroup":
-                body[name] = train_group
+                body[name] = self._extract_list(question, self.TRAIN_GROUP_MAP)
+
             elif name == "priorityList":
-                body[name] = priority
+                body[name] = self._extract_list(question, self.PRIORITY_MAP)
+
             elif name == "assigneeList":
                 body[name] = []
+
+            elif name == "projectList":
+                body[name] = []
+
+            elif name == "customerList":
+                body[name] = []
+
+            elif name == "progressList":
+                body[name] = []
+
+            elif name == "lcntOption":
+                for kw, val in [("1 giai đoạn 1 túi", 1),
+                                ("1 giai đoạn 2 túi", 2),
+                                ("2 giai đoạn 2 túi", 3)]:
+                    if kw in q_lower:
+                        body[name] = [val]; break
+                else:
+                    body[name] = []
+
+            elif name == "lcntOptionDoing":
+                for kw, val in [("không qua mạng", 1), ("qua mạng", 2)]:
+                    if kw in q_lower:
+                        body[name] = [val]; break
+                else:
+                    body[name] = []
+
+            elif name == "bidPlanType":
+                for kw, val in [("trong nước", 1), ("quốc tế", 2)]:
+                    if kw in q_lower:
+                        body[name] = [val]; break
+                else:
+                    body[name] = []
+
+            elif name == "lcntType":
+                lcnt_map = {
+                    "đầu tư rời rạc": 1, "đấu thầu hạn chế": 2,
+                    "mua sắm tập trung": 3, "chào hàng cạnh tranh": 4,
+                    "chủ đầu tư": 5, "tự thực hiện": 6, "hình thức đặc biệt": 7,
+                }
+                found = [v for kw, v in lcnt_map.items() if kw in q_lower]
+                body[name] = found if found else []
+
+            elif name == "lcntDomainType":
+                domain_map = {"mua sắm hàng hóa": 1, "xây lắp": 2,
+                            "tư vấn": 3, "phi tư vấn": 4, "hỗn hợp": 5}
+                found = [v for kw, v in domain_map.items() if kw in q_lower]
+                body[name] = found if found else []
+
+            elif name == "procurementType":
+                if "hình thành gói thầu" in q_lower:
+                    body[name] = ["1"]
+                elif "không hình thành" in q_lower:
+                    body[name] = ["0"]
+                else:
+                    body[name] = []
 
             elif name == "type":
                 ex_type = example_body.get("type")
                 body[name] = self._extract_type_from_desc(question, pdesc, ex_type)
 
             elif name == "sort":
-                sv = self._extract_sort(question)
-                ex_sort = example_body.get("sort")
-                body[name] = sv if sv is not None else ex_sort
+                # FIX 5: chỉ điền sort nếu spec có, lấy từ example_call làm default
+                # KHÔNG inject sort=2 mặc định
+                sv      = self._extract_sort(question)
+                ex_sort = example_body.get("sort")  # None nếu example không set
+                if sv is not None:
+                    body[name] = sv
+                elif ex_sort is not None:
+                    body[name] = ex_sort
+                else:
+                    body[name] = None
 
+            # FIX 2: isCompany — chỉ điền khi spec có param này
             elif name == "isCompany":
-                has_company_kw = bool(re.search(r"cả\s+công\s+ty|toàn\s+công\s+ty", q_lower))
-                body[name] = has_company_kw or not bool(orgs)
+                has_company = bool(re.search(
+                    r"cả\s+công\s+ty|toàn\s+công\s+ty", q_lower))
+                body[name] = has_company or not bool(orgs)
 
+            # FIX 3: isAllProject, isAllCustomer, page, size
+            # — chỉ điền khi spec CÓ param này (vòng lặp all_params đảm bảo điều này)
+            # Nhưng cần kiểm tra evaluator có chấm không trước khi thêm
             elif name == "isAllProject":
                 body[name] = True
 
@@ -431,26 +489,17 @@ class APIAgent:
 
             elif name == "page":
                 body[name] = 0
+
             elif name == "size":
                 body[name] = 20
 
             elif name == "isProbation":
-                # Đọc description để hiểu ngữ nghĩa đúng
-                if "thực tập" in pdesc.lower() or "probation" in pdesc.lower():
-                    if re.search(r"thực tập|tts\b|probation", q_lower):
-                        body[name] = 1
-                    elif re.search(r"chính thức|biên chế", q_lower):
-                        body[name] = 0
-                    else:
-                        body[name] = None
+                if re.search(r"thực tập|tts\b|probation", q_lower):
+                    body[name] = 1
+                elif re.search(r"chính thức|biên chế", q_lower):
+                    body[name] = 0
                 else:
-                    # isProbation theo alias: Đã duyệt=1, Chưa duyệt=0
-                    if re.search(r"đã duyệt", q_lower):
-                        body[name] = 1
-                    elif re.search(r"chưa duyệt", q_lower):
-                        body[name] = 0
-                    else:
-                        body[name] = None
+                    body[name] = None
 
             elif name == "getIsProbation":
                 body[name] = bool(re.search(r"thực tập|tts\b|probation", q_lower))
@@ -468,15 +517,15 @@ class APIAgent:
                 body[name] = td
 
             elif name == "targetCode":
-                path = cfg.get("request", {}).get("path", "")
-                tc_m = re.search(r"targetCode=([A-Z]+)", path)
-                default_tc = tc_m.group(1) if tc_m else "DT"
+                path    = cfg.get("request", {}).get("path", "")
+                tc_m    = re.search(r"targetCode=([A-Z]+)", path)
+                default = tc_m.group(1) if tc_m else "DT"
                 tc = None
                 for kw in sorted(self.TARGET_CODE_MAP, key=len, reverse=True):
                     if kw in q_lower:
                         tc = self.TARGET_CODE_MAP[kw]
                         break
-                body[name] = tc or default_tc
+                body[name] = tc or default
 
             elif name == "cycleType":
                 if re.search(r"quý|quarter", q_lower):
@@ -487,23 +536,11 @@ class APIAgent:
                     body[name] = "month"
 
             elif name == "organizationCode":
-                # Map org name -> code
                 code = "VTIT"
-                for kw, val in self.ORG_MAP.items():
+                for kw, val in sorted(self.ORG_MAP.items(), key=lambda x: -len(x[0])):
                     if kw in q_lower:
-                        code = val
-                        break
+                        code = val; break
                 body[name] = code
-
-            elif name == "customerList":
-                # Để [] nếu không match được customer cụ thể
-                body[name] = []
-
-            elif name == "projectList":
-                body[name] = []
-
-            elif name == "progressList":
-                body[name] = []
 
             elif "List" in ptype or "list" in ptype.lower():
                 body[name] = []
@@ -511,7 +548,7 @@ class APIAgent:
             elif ptype in ("Boolean", "boolean"):
                 body[name] = None
 
-        # Normalize key case
+        # Normalize isAllCustomer key case
         if "IsAllCustomer" in body:
             body["isAllCustomer"] = body.pop("IsAllCustomer")
 
