@@ -5,6 +5,7 @@ import calendar
 
 class APIAgent:
 
+
     def __init__(self, llm_service, retriever, fewshot_loader=None):
         self.llm       = llm_service
         self.retriever = retriever
@@ -103,7 +104,7 @@ class APIAgent:
         "ttcnđt":   "TTCNDT",  "tt cnđt":  "TTCNDT",
         "pm qt":    "TTPMQT",  "pm tcs":   "TTPMTCS", "pm vt":    "TTPMVT",
         "pm cnm":   "TTPMCNM", "pm cds":   "TTPMCDS",
-        # Thêm mới
+        # Thêm từ f2
         "ttpmcđs":  "TTPMCDS", "tt pmcds": "TTPMCDS",
         "tt pmvt":  "TTPMVT",  "tt pmqt":  "TTPMQT",
         "tt pmtcs": "TTPMTCS", "tt pmcnm": "TTPMCNM",
@@ -128,6 +129,7 @@ class APIAgent:
         "time and material": "T&M",      "presale":           "presales",
         "presales":          "presales",
     }
+
 
     PROJECT_STATUS_MAP = {
         "in-progress": "in-progress", "đang thực hiện": "in-progress",
@@ -163,6 +165,7 @@ class APIAgent:
         "tự thực hiện":            "Tự thực hiện",
     }
 
+    # TARGET CODE MAP: dành cho GET APIs KD/TC
     TARGET_CODE_MAP = {
         "doanh thu":            "DT",
         "doanh thu dịch vụ":    "DT",
@@ -225,8 +228,8 @@ class APIAgent:
     def _select_and_extract_params(self, question: str, top_df) -> tuple[str | None, dict]:
         api_list_str = "\n---\n".join(
             f"func_code: {row['func_code']}\n"
-            f"Mô tả: {row.get('description', '')[:150]}\n"   # giảm 200→150
-            f"Ví dụ: {str(row.get('Example question', ''))[:100]}"  # giảm 150→100
+            f"Mô tả: {row.get('description', '')[:200]}\n"
+            f"Ví dụ: {str(row.get('Example question', ''))[:150]}"
             for _, row in top_df.iterrows()
         )
 
@@ -244,7 +247,7 @@ class APIAgent:
         selected_fc = None
         llm_params  = {}
         try:
-            # FIX: raw_decode chỉ đọc JSON object đầu tiên hợp lệ, bỏ qua text thừa → tránh "Extra data"
+            # f2 fix: dùng raw_decode thay vì regex để parse JSON chính xác hơn
             decoder = json.JSONDecoder()
             start   = raw.find('{')
             if start != -1:
@@ -260,6 +263,7 @@ class APIAgent:
                         if re.sub(r"\s+", "", fc).lower() in fc_clean:
                             selected_fc = fc
                             break
+                # f2 fix: or {} để tránh crash khi LLM trả None
                 llm_params = obj.get("body_params", {}) or {}
         except Exception as e:
             print(f"⚠️ LLM select+extract lỗi: {e}")
@@ -346,6 +350,7 @@ class APIAgent:
             elif name == "size":
                 body[name] = 20
             elif name == "isProbation":
+                # isProbation: thực tập sinh = 1, chính thức = 0, mặc định None (lấy hết)
                 q = question.lower()
                 if re.search(r"thực tập|tts\b|probation", q):
                     body[name] = 1
@@ -357,11 +362,13 @@ class APIAgent:
                 q = question.lower()
                 body[name] = bool(re.search(r"thực tập|tts\b|probation", q))
             elif name == "targetCode":
+                # Lấy default từ path template nếu có
                 path = cfg.get("request", {}).get("path", "")
                 tc_match = re.search(r"targetCode=([A-Z]+)", path)
                 default_tc = tc_match.group(1) if tc_match else "DT"
                 body[name] = self._extract_target_code(question, default=default_tc)
             elif name == "cycleType":
+                # cycleType: month/quarter/year
                 q = question.lower()
                 if re.search(r"quý|quarter", q):
                     body[name] = "quarter"
@@ -384,12 +391,11 @@ class APIAgent:
 
     # BUILD PATH: Handle GET APIs với query params trong URL
 
-    def _build_path_with_params(
-        self,
-        cfg: dict,
-        body: dict,
-        question: str,
-    ) -> str:
+    def _build_path_with_params(self, cfg: dict, body: dict, question: str) -> str:
+        """
+        GET APIs dùng query params trong URL path.
+        Inject summary_date, org_code, target_code, cycleType vào path.
+        """
         method = cfg.get("request", {}).get("method", "POST")
         path   = cfg.get("request", {}).get("path", "")
 
@@ -416,6 +422,7 @@ class APIAgent:
 
     # MAIN PROCESS
 
+
     def process(self, question: str) -> str:
         top_df = self.retriever.get_top_apis_df(question, k=5)
         if top_df.empty:
@@ -434,8 +441,9 @@ class APIAgent:
             return "{}"
 
         body = self._build_body(question, selected_row["Endpoint config"], llm_params=llm_params)
-        path = self._build_path_with_params(cfg, body, question)
 
+        # GET APIs: inject params vào URL path thay vì body
+        path   = self._build_path_with_params(cfg, body, question)
         method = cfg.get("request", {}).get("method", "POST")
         if method == "GET":
             return json.dumps({"path": path, "body": {}}, ensure_ascii=False)

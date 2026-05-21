@@ -1,3 +1,6 @@
 data/
 __pycache__/
 *.pyc
+data.zip
+run_preprocess.py
+venv/
